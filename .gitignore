@@ -1,0 +1,21 @@
+# Sistema
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Bases de datos locales (SQLite de desarrollo)
+*.db
+*.sqlite3
+
+# Entorno y configuración local
+.env
+.claude/settings.local.json
+.sdd/current
+
+# Node (webapp)
+node_modules/
