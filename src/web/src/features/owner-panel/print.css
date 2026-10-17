@@ -1,0 +1,17 @@
+/* Al imprimir, solo el QR y el nombre (R011). */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  .print-sheet {
+    display: grid;
+    place-items: center;
+    min-height: 100vh;
+  }
+
+  .print-sheet img {
+    width: 16cm;
+    height: auto;
+  }
+}

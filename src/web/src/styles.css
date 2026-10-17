@@ -1,0 +1,47 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 28rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+form {
+  display: grid;
+  gap: 1rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.field input {
+  font: inherit;
+  padding: 0.5rem;
+}
+
+.field-error,
+[role="alert"] {
+  color: #b42318;
+  margin: 0;
+}
+
+.checkbox {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+button {
+  font: inherit;
+  padding: 0.6rem 1rem;
+}

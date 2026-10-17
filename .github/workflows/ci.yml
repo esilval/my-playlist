@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      web: ${{ steps.filter.outputs.web }}
+      web-exists: ${{ steps.web.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+      # src/web/ llega con T003; hasta entonces el trabajo web no tiene nada que construir.
+      - id: web
+        run: echo "exists=$([ -f src/web/package-lock.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'src/backend/**'
+              - 'src/docker-compose.yml'
+              - '.github/workflows/ci.yml'
+            web:
+              - 'src/web/**'
+              - '.github/workflows/ci.yml'
+
+  backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      # Python sale de src/backend/.python-version (3.13).
+      - run: uv sync --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run mypy app tests migrations
+      - run: uv run pytest tests/unit
+
+  backend-integration:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: myplaylist
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d myplaylist"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      mailpit:
+        image: axllent/mailpit:v1.31.6
+        ports:
+          - 1025:1025
+          - 8025:8025
+        options: >-
+          --health-cmd "/mailpit readyz"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      ENV: test
+      MAILPIT_API_URL: http://localhost:8025
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/myplaylist
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - run: uv run alembic upgrade head
+      - run: uv run pytest tests/integration
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true' && needs.changes.outputs.web-exists == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: src/web/.nvmrc
+          cache: npm
+          cache-dependency-path: src/web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  # Los tipos de la SPA salen del OpenAPI del backend (ADR-0002): si alguien cambia la
+  # API sin regenerarlos, el desfase se ve aquí, cambie el backend o la web.
+  api-types:
+    needs: changes
+    if: >-
+      needs.changes.outputs.web-exists == 'true' &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.web == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: src/web/.nvmrc
+          cache: npm
+          cache-dependency-path: src/web/package-lock.json
+      - run: npm ci
+        working-directory: src/web
+      - run: npm run gen:api
+        working-directory: src/web
+      - name: Los tipos generados están al día
+        run: git diff --exit-code -- src/web/src/api/schema.d.ts
+

@@ -1,0 +1,9 @@
+Alguien intentó registrarse con tu correo en MyPlaylist
+Hola:
+
+Alguien intentó crear una cuenta en MyPlaylist con este correo, que ya tiene una. No hemos creado nada.
+
+Si fuiste tú, entra con tu contraseña: $login_link
+Si no la recuerdas, recupérala aquí: $reset_link
+
+Si no fuiste tú, no tienes que hacer nada.

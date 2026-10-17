@@ -2,7 +2,7 @@
 
 | Campo  | Valor |
 | ------ | ----- |
-| Estado | Approved · 768c39667d2a |
+| Estado | Approved · e312222e8aed |
 
 > Features candidatas: unidades de valor observable que salen de los objetivos
 > del brief. Una candidata no lleva requisitos («el sistema DEBERÁ…»); los
@@ -33,7 +33,7 @@
 - **Problema:** Sin un reproductor en el local, las canciones pedidas no llegan a sonar.
 - **Resultado observable:** El propietario abre la sesión en un navegador del local y las canciones de la cola suenan una tras otra en el orden pedido; si una no se puede reproducir, se salta y se avisa al propietario; al cerrar la sesión la música se detiene.
 - **Dentro:** Abrir y cerrar sesión, reproducción en orden de la cola con YouTube, salto y aviso ante canciones que fallan.
-- **Fuera:** Pedidos de clientes (B03), Spotify (B08), relleno (B07).
+- **Fuera:** Pedidos de clientes (B03), otras plataformas (Spotify descartada, B08), relleno (B07).
 - **Depende de:** B01
 
 ### B03 — Pedir canciones desde el QR
@@ -93,7 +93,7 @@
 
 ### B08 — Canciones de Spotify en la cola
 
-- **Estado:** candidata
+- **Estado:** descartada (los términos de Spotify no permiten reproducirlo en un local comercial con fines de lucro; el piloto usa solo YouTube y, al crecer, un proveedor B2B con licencia — respuesta en Preguntas del brief, ADR-0010)
 - **Objetivos:** G1, G2
 - **Origen:** D1§2, D1§3, D1§4
 - **Problema:** Solo hay música de YouTube y parte del catálogo que quieren los clientes está en Spotify.
