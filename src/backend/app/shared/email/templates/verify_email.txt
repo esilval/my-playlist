@@ -1,0 +1,8 @@
+Verifica tu correo en MyPlaylist
+Hola:
+
+Para verificar tu correo y entrar al panel de $establishment_name, abre este enlace:
+
+$link
+
+El enlace sirve una sola vez y caduca en 7 días. Si no creaste una cuenta en MyPlaylist, ignora este correo.

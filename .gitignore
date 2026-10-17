@@ -7,6 +7,8 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Bases de datos locales (SQLite de desarrollo)
 *.db
@@ -19,3 +21,6 @@ venv/
 
 # Node (webapp)
 node_modules/
+src/web/dist/
+src/web/playwright-report/
+src/web/test-results/

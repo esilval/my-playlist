@@ -2,7 +2,7 @@
 
 | Campo  | Valor |
 | ------ | ----- |
-| Estado | Approved · 536b94383fb7 |
+| Estado | Approved · 0cb192594661 |
 
 > Qué es el producto y para qué, según los documentos de `product/sources/`.
 > Cada elemento cita su origen (`D2§4.2`). Aquí no se redactan requisitos
@@ -52,7 +52,8 @@
 
 - Lanzamiento inicial en Bogotá (D1§1).
 - Producto web SaaS, sin instalación para clientes ni propietarios (D1§5).
-- Plataformas de la primera versión: YouTube y Spotify, mezclables en la misma cola (D1§2, D1§3).
+- Plataforma de la primera versión: solo YouTube. Spotify no se usa porque sus términos no permiten reproducirlo en un local comercial con fines de lucro; al crecer, la música pasará a un proveedor B2B con licencia para locales (p. ej. LoopTV) (D1§2, D1§3, respuesta en Preguntas).
+- Reproducir YouTube en los locales del piloto (menos de 50) es un riesgo de licencia asumido, no un permiso de sus términos (D1§2, D1§4, respuesta en Preguntas).
 - La publicidad que imponga la plataforma de streaming se reproduce y no se controla (D1§4).
 - Fuera de alcance: subir contenido, eventos en vivo, crear playlists en las plataformas, gestionar suscripciones a las plataformas (D1§4).
 - Tratamiento de datos personales conforme a la Ley 1581 de 2012 de Colombia (D1§7, respuesta en Preguntas).
@@ -139,3 +140,5 @@
 - [x] (D1§6) ¿Duración del periodo de prueba? ¿Moneda y medio de pago (p. ej. COP con pasarela local)?
   - **Respuesta:** 30 días, COP, pasarela local: prueba de 30 días; cobro mensual en COP con una pasarela colombiana.
 - [ ] (D1§6; D1§6.1) ¿Precio mensual en COP de los planes Básico y Premium, y qué pasarela colombiana concreta se usa (p. ej. Wompi, PayU, Mercado Pago)?
+- [x] (D1§2; D1§3; D1§4) ¿Permiten los términos de servicio de YouTube y de Spotify reproducir su contenido en un local comercial a través de MyPlaylist? (Viene de la pregunta de ADR-0008 en architecture/questions.md; sustituye a las respuestas anteriores que incluían Spotify en la cola.)
+  - **Respuesta:** Al tratarse de un SaaS de escala menos (menos de 50 clientes) y no ser un servicio de streaming, no hay problema en reproducir contenido de Youtube. Pero cuando esa escala crezca, se debe optar por proveedores de Video B2B (Como LoopTV que cuenta con una API robusta para integrarse con otros sistemas) o Spotify for Business (que es un servicio de pago y no tiene API pública). Con respecto a Spotify existen dos limitantes: 1) Legalmente no se puede usar en un local comercial para fines de lucro y 2) Spotify no permite la integración de su reproductor en un navegador web, por lo que no se puede usar el reproductor de Spotify en el navegador del local (C4). Por lo tanto, se recomienda usar Youtube como fuente principal de música y Spotify solo como fuente secundaria para los clientes que tengan una cuenta premium y quieran escuchar su música personal.
