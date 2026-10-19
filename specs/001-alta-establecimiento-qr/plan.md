@@ -3,8 +3,8 @@
 | Campo  | Valor              |
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
-| Fecha  | 2026-10-17         |
-| Estado | Approved · c7b0d18eb849              |
+| Fecha  | 2026-10-19         |
+| Estado | Approved · 484209f87cc1              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -14,7 +14,7 @@
 
 ## Resumen
 
-Primera feature con código: monta el monorepo (ADR-0012) y construye en el monolito FastAPI el módulo de cuentas y establecimientos (C1), junto con las pantallas de registro, acceso, panel y QR de la SPA (C7) y la página pública mínima que abre el QR. Hay tres decisiones clave:
+Primera feature con código: monta el monorepo con el código bajo `src/` (ADR-0013) y construye en el monolito FastAPI el módulo de cuentas y establecimientos (C1), junto con las pantallas de registro, acceso, panel y QR de la SPA (C7) y la página pública mínima que abre el QR. Hay tres decisiones clave:
 
 - **Sesión opaca en servidor:** el propietario se identifica con una sesión opaca guardada en PostgreSQL, sin JWT. Así se pueden cerrar sesiones de verdad (R008, R020).
 - **Aislamiento desde el primer día:** cada tabla aplica Row-Level Security (ADR-0009). Las pocas búsquedas que ocurren antes de saber el establecimiento (inicio de sesión, tokens, página pública) van por funciones `SECURITY DEFINER` muy acotadas.
@@ -29,7 +29,7 @@ No aplica: el proyecto no tiene `specs/constitution.md`. Los invariantes propues
 
 | Decisión o estándar | Cómo lo cumple este plan |
 | ------------------- | ------------------------ |
-| ADR-0001 — Monolito modular | C1 es un módulo del monolito (`backend/app/accounts/`) con su interfaz pública; no se crea ningún servicio nuevo. |
+| ADR-0001 — Monolito modular | C1 es un módulo del monolito (`src/backend/app/accounts/`) con su interfaz pública; no se crea ningún servicio nuevo. |
 | ADR-0002 — Python/FastAPI, TypeScript | Backend en FastAPI con Pydantic; la SPA consume un cliente TypeScript generado desde el OpenAPI (D9). |
 | ADR-0003 — Una SPA React + Vite | Registro, acceso, panel, QR imprimible y página pública son rutas de la misma SPA (D9). |
 | ADR-0004 — PostgreSQL + Redis | Todo el estado de la feature (cuentas, sesiones, intentos, tokens, correos pendientes) vive en PostgreSQL; esta feature no usa Redis. |
@@ -37,7 +37,7 @@ No aplica: el proyecto no tiene `specs/constitution.md`. Los invariantes propues
 | ADR-0007 — Autenticación propia | Correo y contraseña con Argon2id y sesión en cookie HttpOnly + Secure (D2, D3); sin proveedores externos. El token anónimo del cliente no aplica todavía: llega con B03. |
 | ADR-0009 — Columna + RLS | Toda tabla lleva `establishment_id` y una política RLS; el rol de la API no tiene BYPASSRLS; las búsquedas previas al establecimiento van por funciones `SECURITY DEFINER` (D4). |
 | ADR-0011 — Correo con Amazon SES | Los correos de verificación, recuperación y aviso de intento de registro salen por un puerto de correo, con un adaptador SES y otro local (D7). La gestión de rebotes y quejas por SNS que pide el ADR queda para cuando se despliegue (ver Riesgos). |
-| ADR-0012 — Monorepo y herramientas base | El plan crea `backend/`, `web/` e `infra/` (vacía) con las herramientas de ese ADR. |
+| ADR-0013 — Monorepo con el código bajo `src/` | El código y su tooling viven en `src/backend/`, `src/web/`, `src/perf/`, `src/docker-compose.yml` y `src/.env.example`, con las herramientas del ADR; en la raíz quedan `specs/`, `architecture/`, `product/`, `docs/` y `.github/`. `src/realtime/` e `src/infra/` quedan reservados hasta la primera feature que los necesite. |
 | S1 — Capas del monolito | `accounts/` se divide en `api/`, `application/`, `domain/` e `infrastructure/`; el dominio no importa FastAPI ni SQLAlchemy. Hashing, correo y reloj son puertos. |
 | S6 — Los frontales no acceden a los almacenes | La SPA solo llama a `/api/*`; el PNG del QR lo genera el backend (D6). |
 | S8 — `establishment_id` y RLS | Lo cumplen todas las tablas salvo `login_attempt`, que se indexa por correo antes de existir sesión. Es una tabla de seguridad, no de negocio, sin acceso desde la API pública (D5). |
@@ -64,7 +64,7 @@ No aplica: el proyecto no tiene `specs/constitution.md`. Los invariantes propues
 
 - **Contexto:** las contraseñas no pueden leerse en claro (RNF Seguridad), y un correo inexistente no debe distinguirse de una contraseña errónea (R006).
 - **Decisión:**
-  - Se usa Argon2id con `argon2-cffi` y la configuración mínima que recomienda OWASP: 19 MiB de memoria, 2 pasadas y 1 hilo, unos 20 ms por hash. Los parámetros salen de configuración y se fijaron con la prueba de carga `perf/accounts.js` (T023). Con 50 establecimientos a la vez, en local, el p95 queda en 0,89 s para el registro, 0,24 s para el inicio de sesión y 0,35 s para el QR.
+  - Se usa Argon2id con `argon2-cffi` y la configuración mínima que recomienda OWASP: 19 MiB de memoria, 2 pasadas y 1 hilo, unos 20 ms por hash. Los parámetros salen de configuración y se fijaron con la prueba de carga `src/perf/accounts.js` (T023). Con 50 establecimientos a la vez, en local, el p95 queda en 0,89 s para el registro, 0,24 s para el inicio de sesión y 0,35 s para el QR.
   - El hash corre fuera del bucle de eventos, en hilos, con un tope de uno por núcleo (`app/shared/cpu.py`).
   - Si el correo no existe, se verifica contra un hash ficticio para igualar el tiempo. Los dos fallos devuelven el mismo `401` con el mismo cuerpo.
 - **Alternativas descartadas:**
@@ -74,7 +74,7 @@ No aplica: el proyecto no tiene `specs/constitution.md`. Los invariantes propues
   - Calcular el hash en el bucle de eventos: los hashes simultáneos van en fila (p95 de 4 s).
   - Hilos sin tope: los hashes compiten por la memoria y las peticiones llegan a 60 s.
 - **Consecuencias:**
-  - El coste del hash limita cuántos inicios de sesión por segundo admite cada tarea. Subirlo exige más vCPU o más tareas, y se vuelve a medir con `perf/accounts.js`.
+  - El coste del hash limita cuántos inicios de sesión por segundo admite cada tarea. Subirlo exige más vCPU o más tareas, y se vuelve a medir con `src/perf/accounts.js`.
   - El inicio de sesión espera su turno de CPU dentro de la transacción que bloquea el correo (D5), así que retiene una conexión del pool mientras tanto. Con 50 locales no se nota.
   - El tope se calcula con `os.cpu_count()`, que ve los núcleos de la máquina y no la cuota de CPU del contenedor. Se revisa en la feature de infraestructura, con la vCPU de las tareas Fargate.
 
@@ -142,7 +142,7 @@ No aplica: el proyecto no tiene `specs/constitution.md`. Los invariantes propues
 ### D10 — Entorno local completo bajo el mismo origen
 
 - **Contexto:** la cookie de sesión y la protección CSRF (D9) exigen que la SPA y la API compartan origen, y las pruebas e2e necesitan API, trabajador, web y buzón de correo funcionando a la vez.
-- **Decisión:** `docker-compose.yml` levanta PostgreSQL, Redis, Mailpit, `api` (uvicorn), `worker` (`python -m app.worker`) y `web` (Vite). El servidor de Vite hace de proxy de `/api/*` hacia `api`, así que el navegador solo ve `http://localhost:5173`. Playwright apunta a ese origen y lee los correos de la API de Mailpit.
+- **Decisión:** `src/docker-compose.yml` levanta PostgreSQL, Redis, Mailpit, `api` (uvicorn), `worker` (`python -m app.worker`) y `web` (Vite). El servidor de Vite hace de proxy de `/api/*` hacia `api`, así que el navegador solo ve `http://localhost:5173`. Playwright apunta a ese origen y lee los correos de la API de Mailpit.
 - **Alternativas descartadas:** CORS con credenciales entre `localhost:5173` y `localhost:8000`, que no reproduce el despliegue real (mismo dominio tras CloudFront) y obliga a relajar `SameSite`; y un nginx local como proxy, que añade otra pieza sin ventaja frente al proxy de Vite.
 - **Consecuencias:** el proxy de Vite solo se usa en local; en AWS el enrutado lo hace CloudFront (`/api/*` al ALB y el resto a S3 con vuelta a `index.html` para las rutas de la SPA, incluida `/l/:code`). Esa configuración entra con la feature de infraestructura.
 
@@ -166,7 +166,7 @@ No aplica: el proyecto no tiene `specs/constitution.md`. Los invariantes propues
 ### D12 — Política de tratamiento versionada desde el backend
 
 - **Contexto:** R022 exige publicar la política sin sesión, enlazarla junto a la autorización y guardar qué versión se aceptó y cuándo. El texto lo aporta el negocio (supuesto de la spec).
-- **Decisión:** la política vive en el backend como archivos Markdown versionados (`backend/app/accounts/policy/<versión>.md`), con la versión vigente en configuración (`DATA_POLICY_VERSION`). `GET /api/public/data-policy` devuelve `{version, content}` y la SPA lo muestra en `/politica-de-datos`. El formulario de registro envía la `policy_version` que mostró el enlace; si no coincide con la vigente, el backend responde `422 {policy_version: "outdated"}` y la SPA recarga la política. Así, la versión guardada en `data_authorization` es la que el propietario tuvo delante.
+- **Decisión:** la política vive en el backend como archivos Markdown versionados (`src/backend/app/accounts/policy/<versión>.md`), con la versión vigente en configuración (`DATA_POLICY_VERSION`). `GET /api/public/data-policy` devuelve `{version, content}` y la SPA lo muestra en `/politica-de-datos`. El formulario de registro envía la `policy_version` que mostró el enlace; si no coincide con la vigente, el backend responde `422 {policy_version: "outdated"}` y la SPA recarga la política. Así, la versión guardada en `data_authorization` es la que el propietario tuvo delante.
 - **Alternativas descartadas:** el texto como página estática de la SPA, porque la versión aceptada podría no coincidir con la que registra el backend; y guardar el texto en base de datos, que no tiene sentido mientras lo publique el equipo y no el propietario.
 - **Consecuencias:** cambiar la política es publicar un archivo nuevo y subir `DATA_POLICY_VERSION`. Mientras no llegue el texto del negocio, el repositorio lleva un marcador `0000-borrador.md` que impide pasar a producción (ver Riesgos). Se renombra `data_consent` a `data_authorization` para usar el término de la spec.
 
@@ -174,18 +174,18 @@ No aplica: el proyecto no tiene `specs/constitution.md`. Los invariantes propues
 
 | Componente | Cambio | Requisitos que cubre |
 | ---------- | ------ | -------------------- |
-| `backend/app/accounts/domain/` | Entidades Account, Establishment, Session, EmailToken, DataAuthorization; reglas de registro, normalización de correo, caducidad de sesión, bloqueo por intentos, estado de los tokens (vigente, usado, caducado, reemplazado) y límite de correos; puertos PasswordHasher, EmailSender, Clock | R003, R004, R006, R007, R009, R014, R020, R022, R023, R024, R026, R027, R028 |
-| `backend/app/accounts/application/` | Casos de uso: registrar (rama nueva y rama de correo existente), iniciar y cerrar sesión, resolver sesión, verificar correo con creación de sesión, reenviar verificación, pedir y confirmar recuperación (la confirmación revoca todas las sesiones), editar establecimiento, generar QR, obtener la política | R004, R005, R006, R007, R008, R010, R014, R016, R017, R018, R019, R020, R021, R022, R023, R024, R025, R026, R027, R028 |
-| `backend/app/accounts/api/` | Routers `/api/auth/*`, `/api/owner/*` y `/api/public/*`; dependencia `current_owner` que fija el contexto RLS; errores por campo; CSRF y HSTS | R003, R005, R006, R008, R010, R012, R013, R015, R016, R018, R019, R022, R023, R024, R025, R026 |
-| `backend/app/accounts/infrastructure/` | Repositorios SQLAlchemy, adaptador Argon2, generador del QR con segno + Pillow | R009, R010, R023 |
-| `backend/app/accounts/policy/` | Archivos de la política de tratamiento por versión | R022 |
-| `backend/app/shared/` | Unidad de trabajo con `SET LOCAL app.establishment_id`, bandeja de salida, trabajador `app.worker` (envío, reintentos, purga de `login_attempt`), adaptadores SES, Mailpit y en memoria, configuración, ejecución de CPU fuera del bucle de eventos con un hilo por núcleo (D3) | R015, R016, R017, R024, R027 |
-| `backend/migrations/` | Migración Alembic inicial: tablas, índices, políticas RLS, trigger de `public_code`, funciones `SECURITY DEFINER`, roles `app_migrator`, `app_api` y `app_worker` | R009, R013, R015, R024 |
-| `web/src/features/auth/` | Pantallas de registro (con enlace a la política), «revisa tu correo», inicio de sesión, recuperación, restablecimiento y verificación (verificado, ya verificado, inválido y caducado) | R003, R004, R005, R006, R007, R016, R017, R022, R023, R025, R026, R028 |
-| `web/src/features/legal/` | Página `/politica-de-datos` | R022 |
-| `web/src/features/owner-panel/` | Panel: datos del establecimiento, descarga e impresión del QR con bloqueo si no está verificado, aviso de verificación con reenvío y aviso de espera, cierre de sesión | R008, R010, R011, R014, R018, R019, R020, R027 |
-| `web/src/features/public-establishment/` | Página `/l/:code` con el nombre o «establecimiento no encontrado» | R012, R013 |
-| Raíz del repo | `docker-compose.yml` con Postgres 16, Redis, Mailpit, `api`, `worker` y `web`; proxy `/api` de Vite; `backend/pyproject.toml` con uv; `web/package.json`; CI (D10) | — |
+| `src/backend/app/accounts/domain/` | Entidades Account, Establishment, Session, EmailToken, DataAuthorization; reglas de registro, normalización de correo, caducidad de sesión, bloqueo por intentos, estado de los tokens (vigente, usado, caducado, reemplazado) y límite de correos; puertos PasswordHasher, EmailSender, Clock | R003, R004, R006, R007, R009, R014, R020, R022, R023, R024, R026, R027, R028 |
+| `src/backend/app/accounts/application/` | Casos de uso: registrar (rama nueva y rama de correo existente), iniciar y cerrar sesión, resolver sesión, verificar correo con creación de sesión, reenviar verificación, pedir y confirmar recuperación (la confirmación revoca todas las sesiones), editar establecimiento, generar QR, obtener la política | R004, R005, R006, R007, R008, R010, R014, R016, R017, R018, R019, R020, R021, R022, R023, R024, R025, R026, R027, R028 |
+| `src/backend/app/accounts/api/` | Routers `/api/auth/*`, `/api/owner/*` y `/api/public/*`; dependencia `current_owner` que fija el contexto RLS; errores por campo; CSRF y HSTS | R003, R005, R006, R008, R010, R012, R013, R015, R016, R018, R019, R022, R023, R024, R025, R026 |
+| `src/backend/app/accounts/infrastructure/` | Repositorios SQLAlchemy, adaptador Argon2, generador del QR con segno + Pillow | R009, R010, R023 |
+| `src/backend/app/accounts/policy/` | Archivos de la política de tratamiento por versión | R022 |
+| `src/backend/app/shared/` | Unidad de trabajo con `SET LOCAL app.establishment_id`, bandeja de salida, trabajador `app.worker` (envío, reintentos, purga de `login_attempt`), adaptadores SES, Mailpit y en memoria, configuración, ejecución de CPU fuera del bucle de eventos con un hilo por núcleo (D3) | R015, R016, R017, R024, R027 |
+| `src/backend/migrations/` | Migración Alembic inicial: tablas, índices, políticas RLS, trigger de `public_code`, funciones `SECURITY DEFINER`, roles `app_migrator`, `app_api` y `app_worker` | R009, R013, R015, R024 |
+| `src/web/src/features/auth/` | Pantallas de registro (con enlace a la política), «revisa tu correo», inicio de sesión, recuperación, restablecimiento y verificación (verificado, ya verificado, inválido y caducado) | R003, R004, R005, R006, R007, R016, R017, R022, R023, R025, R026, R028 |
+| `src/web/src/features/legal/` | Página `/politica-de-datos` | R022 |
+| `src/web/src/features/owner-panel/` | Panel: datos del establecimiento, descarga e impresión del QR con bloqueo si no está verificado, aviso de verificación con reenvío y aviso de espera, cierre de sesión | R008, R010, R011, R014, R018, R019, R020, R027 |
+| `src/web/src/features/public-establishment/` | Página `/l/:code` con el nombre o «establecimiento no encontrado» | R012, R013 |
+| `src/` y CI | `src/docker-compose.yml` con Postgres 16, Redis, Mailpit, `api`, `worker` y `web`; proxy `/api` de Vite; `src/backend/pyproject.toml` con uv; `src/web/package.json`; CI (D10) | — |
 
 ## Modelo de datos
 
@@ -233,35 +233,35 @@ Todos los cuerpos van en JSON salvo el PNG. Los errores de validación devuelven
 
 | Requisito | Tipo de prueba | Dónde vive |
 | --------- | -------------- | ---------- |
-| R003 | unitaria (dominio), integración y componente | `backend/tests/unit/test_registration_rules.py`, `web/src/features/auth/Register.test.tsx` |
-| R004 | integración (sin autorización: 422 y nada creado) y componente | `backend/tests/integration/test_register.py`, `web/src/features/auth/Register.test.tsx` |
-| R005 | integración y e2e | `backend/tests/integration/test_login.py`, `web/e2e/login.spec.ts` |
-| R006 | integración (mismo cuerpo y código en ambos casos) | `backend/tests/integration/test_login.py` |
-| R007 | unitaria (regla con reloj falso) e integración | `backend/tests/unit/test_login_throttle.py`, `backend/tests/integration/test_login.py` |
-| R008 | integración y e2e | `backend/tests/integration/test_session.py`, `web/e2e/login.spec.ts` |
-| R009 | unitaria (generador de código) e integración (unicidad, trigger de inmutabilidad, el registro asigna el código y editar no lo cambia) | `backend/tests/unit/test_public_code.py`, `backend/tests/integration/test_schema.py`, `backend/tests/integration/test_register.py`, `backend/tests/integration/test_establishment.py` |
-| R010 | integración: decodificar el PNG con `zxing-cpp` y comprobar la URL y el nombre | `backend/tests/integration/test_qr.py` |
-| R011 | e2e (la vista de impresión contiene solo el QR y el nombre) | `web/e2e/qr.spec.ts` |
-| R012 | integración y e2e | `backend/tests/integration/test_public_page.py`, `web/e2e/public-page.spec.ts` |
-| R013 | integración (código inexistente y mal formado) y e2e | `backend/tests/integration/test_public_page.py`, `web/e2e/public-page.spec.ts` |
-| R014 | unitaria (solo cambian los campos enviados, un opcional vacío pasa a `NULL`, el nombre vacío se rechaza), integración (el `public_code` no cambia, `GET /api/public/establishments/{code}` devuelve el nombre nuevo y el nombre vacío da `422` sin cambiar nada) y componente (el error se muestra en el campo) | `backend/tests/unit/test_establishment_changes.py`, `backend/tests/integration/test_establishment.py`, `web/src/features/owner-panel/Panel.test.tsx` |
-| R015 | integración: sin sesión, sesión de otro propietario y consulta directa con RLS | `backend/tests/integration/test_isolation.py` |
-| R016 | unitaria (caducidad y un solo uso), integración (además, una contraseña nueva de 7 caracteres da `422` y el mismo enlace sirve después) y e2e con Mailpit | `backend/tests/unit/test_email_token.py`, `backend/tests/integration/test_password_reset.py`, `web/e2e/password-reset.spec.ts` |
-| R017 | integración (el registro encola el correo de verificación) y e2e con Mailpit | `backend/tests/integration/test_verify_email.py`, `web/e2e/register.spec.ts` |
-| R018 | integración y componente (QrCard y PrintQr ante `403`, sin abrir la impresión) | `backend/tests/integration/test_qr.py`, `web/src/features/owner-panel/QrCard.test.tsx`, `web/src/features/owner-panel/PrintQr.test.tsx` |
-| R019 | integración | `backend/tests/integration/test_establishment.py` |
-| R020 | unitaria (regla de inactividad con reloj falso) e integración | `backend/tests/unit/test_session_expiry.py`, `backend/tests/integration/test_session.py` |
-| R022 | integración (la política se sirve sin sesión; `data_authorization` guarda versión y fecha; una versión desfasada da 422) y componente (enlace junto a la casilla) | `backend/tests/integration/test_data_policy.py`, `backend/tests/integration/test_register.py`, `web/src/features/auth/Register.test.tsx`, `web/src/features/legal/DataPolicy.test.tsx` |
-| R023 | integración (202 sin cookie, cuenta y establecimiento únicos creados, dirección y teléfono opcionales; después el inicio de sesión entra) y e2e | `backend/tests/integration/test_register.py`, `web/e2e/register.spec.ts` |
-| R024 | integración (correo existente con otras mayúsculas: respuesta byte a byte idéntica a la de un registro nuevo, nada creado, aviso `registration_attempt` encolado al titular) | `backend/tests/integration/test_register.py` |
-| R025 | integración (el primer uso verifica y devuelve cookie válida; el segundo devuelve `already_verified` sin cookie) y e2e (registro, enlace de Mailpit, dentro del panel) | `backend/tests/integration/test_verify_email.py`, `web/e2e/register.spec.ts` |
-| R026 | integración (token alterado y token reemplazado por un reenvío: 400, el correo sigue sin verificar, sin cookie) y componente (mensaje y oferta de un enlace nuevo) | `backend/tests/integration/test_verify_email.py`, `web/src/features/auth/VerifyEmail.test.tsx` |
-| R028 | unitaria (estado del token con reloj falso: 6 días vigente, 8 días caducado, usado y caducado sigue «ya verificado») e integración (un token de 8 días da `400 expired_token`, sin cookie y el correo sigue sin verificar; uno de 6 días verifica e inicia sesión) y componente (mensaje «el enlace caducó» con la oferta de uno nuevo) | `backend/tests/unit/test_email_token.py`, `backend/tests/integration/test_verify_email.py`, `web/src/features/auth/VerifyEmail.test.tsx` |
-| R027 | unitaria (regla de 3 por hora con reloj falso) e integración (el cuarto correo de recuperación no se encola y la respuesta es igual; el cuarto reenvío da 429; pasada la hora vuelve a enviar) | `backend/tests/unit/test_email_quota.py`, `backend/tests/integration/test_email_quota.py` |
-| R021 | integración (dos sesiones abiertas, confirmar el restablecimiento: ambas dan `401` y la contraseña anterior da `401 invalid_credentials`) y e2e con dos contextos de navegador | `backend/tests/integration/test_password_reset.py`, `web/e2e/password-reset.spec.ts` |
+| R003 | unitaria (dominio), integración y componente | `src/backend/tests/unit/test_registration_rules.py`, `src/web/src/features/auth/Register.test.tsx` |
+| R004 | integración (sin autorización: 422 y nada creado) y componente | `src/backend/tests/integration/test_register.py`, `src/web/src/features/auth/Register.test.tsx` |
+| R005 | integración y e2e | `src/backend/tests/integration/test_login.py`, `src/web/e2e/login.spec.ts` |
+| R006 | integración (mismo cuerpo y código en ambos casos) | `src/backend/tests/integration/test_login.py` |
+| R007 | unitaria (regla con reloj falso) e integración | `src/backend/tests/unit/test_login_throttle.py`, `src/backend/tests/integration/test_login.py` |
+| R008 | integración y e2e | `src/backend/tests/integration/test_session.py`, `src/web/e2e/login.spec.ts` |
+| R009 | unitaria (generador de código) e integración (unicidad, trigger de inmutabilidad, el registro asigna el código y editar no lo cambia) | `src/backend/tests/unit/test_public_code.py`, `src/backend/tests/integration/test_schema.py`, `src/backend/tests/integration/test_register.py`, `src/backend/tests/integration/test_establishment.py` |
+| R010 | integración: decodificar el PNG con `zxing-cpp` y comprobar la URL y el nombre | `src/backend/tests/integration/test_qr.py` |
+| R011 | e2e (la vista de impresión contiene solo el QR y el nombre) | `src/web/e2e/qr.spec.ts` |
+| R012 | integración y e2e | `src/backend/tests/integration/test_public_page.py`, `src/web/e2e/public-page.spec.ts` |
+| R013 | integración (código inexistente y mal formado) y e2e | `src/backend/tests/integration/test_public_page.py`, `src/web/e2e/public-page.spec.ts` |
+| R014 | unitaria (solo cambian los campos enviados, un opcional vacío pasa a `NULL`, el nombre vacío se rechaza), integración (el `public_code` no cambia, `GET /api/public/establishments/{code}` devuelve el nombre nuevo y el nombre vacío da `422` sin cambiar nada) y componente (el error se muestra en el campo) | `src/backend/tests/unit/test_establishment_changes.py`, `src/backend/tests/integration/test_establishment.py`, `src/web/src/features/owner-panel/Panel.test.tsx` |
+| R015 | integración: sin sesión, sesión de otro propietario y consulta directa con RLS | `src/backend/tests/integration/test_isolation.py` |
+| R016 | unitaria (caducidad y un solo uso), integración (además, una contraseña nueva de 7 caracteres da `422` y el mismo enlace sirve después) y e2e con Mailpit | `src/backend/tests/unit/test_email_token.py`, `src/backend/tests/integration/test_password_reset.py`, `src/web/e2e/password-reset.spec.ts` |
+| R017 | integración (el registro encola el correo de verificación) y e2e con Mailpit | `src/backend/tests/integration/test_verify_email.py`, `src/web/e2e/register.spec.ts` |
+| R018 | integración y componente (QrCard y PrintQr ante `403`, sin abrir la impresión) | `src/backend/tests/integration/test_qr.py`, `src/web/src/features/owner-panel/QrCard.test.tsx`, `src/web/src/features/owner-panel/PrintQr.test.tsx` |
+| R019 | integración | `src/backend/tests/integration/test_establishment.py` |
+| R020 | unitaria (regla de inactividad con reloj falso) e integración | `src/backend/tests/unit/test_session_expiry.py`, `src/backend/tests/integration/test_session.py` |
+| R022 | integración (la política se sirve sin sesión; `data_authorization` guarda versión y fecha; una versión desfasada da 422) y componente (enlace junto a la casilla) | `src/backend/tests/integration/test_data_policy.py`, `src/backend/tests/integration/test_register.py`, `src/web/src/features/auth/Register.test.tsx`, `src/web/src/features/legal/DataPolicy.test.tsx` |
+| R023 | integración (202 sin cookie, cuenta y establecimiento únicos creados, dirección y teléfono opcionales; después el inicio de sesión entra) y e2e | `src/backend/tests/integration/test_register.py`, `src/web/e2e/register.spec.ts` |
+| R024 | integración (correo existente con otras mayúsculas: respuesta byte a byte idéntica a la de un registro nuevo, nada creado, aviso `registration_attempt` encolado al titular) | `src/backend/tests/integration/test_register.py` |
+| R025 | integración (el primer uso verifica y devuelve cookie válida; el segundo devuelve `already_verified` sin cookie) y e2e (registro, enlace de Mailpit, dentro del panel) | `src/backend/tests/integration/test_verify_email.py`, `src/web/e2e/register.spec.ts` |
+| R026 | integración (token alterado y token reemplazado por un reenvío: 400, el correo sigue sin verificar, sin cookie) y componente (mensaje y oferta de un enlace nuevo) | `src/backend/tests/integration/test_verify_email.py`, `src/web/src/features/auth/VerifyEmail.test.tsx` |
+| R028 | unitaria (estado del token con reloj falso: 6 días vigente, 8 días caducado, usado y caducado sigue «ya verificado») e integración (un token de 8 días da `400 expired_token`, sin cookie y el correo sigue sin verificar; uno de 6 días verifica e inicia sesión) y componente (mensaje «el enlace caducó» con la oferta de uno nuevo) | `src/backend/tests/unit/test_email_token.py`, `src/backend/tests/integration/test_verify_email.py`, `src/web/src/features/auth/VerifyEmail.test.tsx` |
+| R027 | unitaria (regla de 3 por hora con reloj falso) e integración (el cuarto correo de recuperación no se encola y la respuesta es igual; el cuarto reenvío da 429; pasada la hora vuelve a enviar) | `src/backend/tests/unit/test_email_quota.py`, `src/backend/tests/integration/test_email_quota.py` |
+| R021 | integración (dos sesiones abiertas, confirmar el restablecimiento: ambas dan `401` y la contraseña anterior da `401 invalid_credentials`) y e2e con dos contextos de navegador | `src/backend/tests/integration/test_password_reset.py`, `src/web/e2e/password-reset.spec.ts` |
 
 **Requisitos no funcionales:**
-- **Rendimiento:** prueba de carga con k6 en `perf/accounts.js`: 50 establecimientos concurrentes registrándose, entrando y descargando el QR, con p95 < 2 s; con ella se fijan los parámetros de Argon2 (D3).
+- **Rendimiento:** prueba de carga con k6 en `src/perf/accounts.js`: 50 establecimientos concurrentes registrándose, entrando y descargando el QR, con p95 < 2 s; con ella se fijan los parámetros de Argon2 (D3).
 - **Compatibilidad:** prueba manual documentada en `docs/qa/qr-escaneo.md`: impresión en carta y escaneo con la cámara nativa de iOS y Android.
 - **Privacidad:** una prueba de integración comprueba que `data_authorization` registra versión y fecha y que no se guarda ningún otro dato personal.
 - **Seguridad (transporte):** una prueba de integración comprueba que la cookie lleva `Secure` y `HttpOnly` y que la API envía `Strict-Transport-Security`. El cifrado de extremo a extremo se verifica al desplegar.
@@ -274,7 +274,7 @@ Las pruebas de integración corren contra el PostgreSQL de docker-compose con el
 | ------ | ------- | ---------- |
 | SES en sandbox: los correos solo llegan a direcciones verificadas | El registro real no puede verificarse en el piloto | Pedir a AWS la salida del sandbox y configurar SPF, DKIM y DMARC antes del piloto (ADR-0011) |
 | Una función `SECURITY DEFINER` devuelve más de lo debido | Se rompe el aislamiento (Q6) | Pocas funciones con columnas explícitas, revisión obligatoria y pruebas en `test_definer_functions.py` |
-| El coste de Argon2 sube la latencia con carga | El RNF de p95 < 2 s no se cumple | Medido en T023: con el mínimo de OWASP y un hilo por núcleo se cumple en local (D3). Repetir `perf/accounts.js` si cambian los parámetros o la vCPU, y escalar las tareas Fargate |
+| El coste de Argon2 sube la latencia con carga | El RNF de p95 < 2 s no se cumple | Medido en T023: con el mínimo de OWASP y un hilo por núcleo se cumple en local (D3). Repetir `src/perf/accounts.js` si cambian los parámetros o la vCPU, y escalar las tareas Fargate |
 | La infraestructura de AWS no existe todavía | Los RNF de disponibilidad (99,5 %) y de tráfico cifrado no se pueden verificar en esta feature | Se cierran en una feature de infraestructura aparte (CloudFront con vuelta a `index.html`, ALB, RDS, ECS, SES fuera del sandbox con rebotes por SNS), que conviene abrir antes del piloto; aquí la aplicación queda lista (D9, D10) |
 | El texto de la política de tratamiento no ha llegado | No se puede abrir el registro real sin incumplir la Ley 1581 | Marcador `0000-borrador.md` con una comprobación de arranque que impide `ENV=production` mientras la versión vigente sea el borrador (D12) |
 | Cambiar el dominio público invalida los QR impresos | Habría que reimprimir los QR de todos los locales | Fijar el dominio definitivo antes del primer QR real; `PUBLIC_BASE_URL` sale de configuración |
@@ -283,4 +283,4 @@ Las pruebas de integración corren contra el PostgreSQL de docker-compose con el
 
 Todos los requisitos MUST vigentes de `spec.md` (R003–R006, R008–R010, R012–R015, R017–R026, R028) aparecen en la tabla de componentes y en la de pruebas. Los SHOULD (R007, R011, R016, R027) también están cubiertos. R001 y R002 están obsoletos: sus comportamientos se retiran del plan y los cubren R023, R024 y R025.
 
-R021 se añadió a la spec con `/sdd:amend` a partir de un riesgo de la primera versión de este plan. R022–R027 llegaron con la enmienda posterior a `/sdd:analyze`, y R028 con la enmienda que cerró el riesgo de un enlace de verificación sin caducidad. La enmienda del 2026-10-17 alinea el plan con la implementación: fija los parámetros de Argon2 medidos en T023 (D3) y corrige la redacción de D8, D9, los roles, los contratos y la referencia a las pruebas de las funciones `SECURITY DEFINER`. Recoge también las aclaraciones de R014 (campos parciales y nombre vacío) y de R016 (contraseña nueva de al menos 8 caracteres) en los contratos y en las pruebas, y corrige dónde viven las pruebas de R009. El plan no introduce ningún requisito.
+R021 se añadió a la spec con `/sdd:amend` a partir de un riesgo de la primera versión de este plan. R022–R027 llegaron con la enmienda posterior a `/sdd:analyze`, y R028 con la enmienda que cerró el riesgo de un enlace de verificación sin caducidad. La enmienda del 2026-10-19 pasa todas las rutas a `src/` y cita ADR-0013, la decisión vigente sobre la estructura del repositorio. La del 2026-10-17 alinea el plan con la implementación: fija los parámetros de Argon2 medidos en T023 (D3) y corrige la redacción de D8, D9, los roles, los contratos y la referencia a las pruebas de las funciones `SECURITY DEFINER`. Recoge también las aclaraciones de R014 (campos parciales y nombre vacío) y de R016 (contraseña nueva de al menos 8 caracteres) en los contratos y en las pruebas, y corrige dónde viven las pruebas de R009. El plan no introduce ningún requisito.
