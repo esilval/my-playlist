@@ -15,6 +15,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       web: ${{ steps.filter.outputs.web }}
+      realtime: ${{ steps.filter.outputs.realtime }}
       web-exists: ${{ steps.web.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +32,9 @@ jobs:
               - '.github/workflows/ci.yml'
             web:
               - 'src/web/**'
+              - '.github/workflows/ci.yml'
+            realtime:
+              - 'src/realtime/**'
               - '.github/workflows/ci.yml'
 
   backend:
@@ -121,6 +125,39 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+
+  # Servicio de tiempo real (feature 002, plan D9): lint, tipos, build y pruebas contra
+  # un Redis real.
+  realtime:
+    needs: changes
+    if: needs.changes.outputs.realtime == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/realtime
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: src/realtime/.nvmrc
+          cache: npm
+          cache-dependency-path: src/realtime/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
 
   # Los tipos de la SPA salen del OpenAPI del backend (ADR-0002): si alguien cambia la
   # API sin regenerarlos, el desfase se ve aquí, cambie el backend o la web.

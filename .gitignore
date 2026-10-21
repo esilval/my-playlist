@@ -24,3 +24,6 @@ node_modules/
 src/web/dist/
 src/web/playwright-report/
 src/web/test-results/
+
+# Servicio de tiempo real
+src/realtime/dist/

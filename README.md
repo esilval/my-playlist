@@ -27,7 +27,7 @@ El detalle está en [`product/brief.md`](product/brief.md), y el documento de or
 | Candidata | Funcionalidad | Estado |
 | --------- | ------------- | ------ |
 | B01 | Alta del establecimiento y su QR | **Implementada** ([feature 001](specs/001-alta-establecimiento-qr/)). Falta la prueba manual de escaneo del QR impreso. |
-| B02 | Sesión de música y reproductor del local | Pendiente |
+| B02 | Sesión de música y reproductor del local | **En curso** ([feature 002](specs/002-sesion-musica-reproductor-local/)): hechos el backend y el servicio de tiempo real; faltan el reproductor y la tarjeta del panel en la web. |
 | B03 | Pedir canciones desde el QR | Pendiente |
 | B04 | Ventana anti-repetición | Pendiente |
 | B05 | Administrar la cola de la sesión | Pendiente |
@@ -53,12 +53,13 @@ documentation/    Descripción original del producto
 src/
 ├── backend/      Monolito modular en Python/FastAPI → src/backend/README.md
 ├── web/          SPA React + Vite para todos los frontales → src/web/README.md
+├── realtime/     Servicio de tiempo real (Node + Socket.IO) → src/realtime/README.md
 ├── perf/         Pruebas de carga con k6 → src/perf/README.md
 ├── docker-compose.yml
 └── .env.example
 ```
 
-`src/realtime/` (servicio de tiempo real) e `src/infra/` (infraestructura como código) están reservados por ADR-0013. Se crean con la primera feature que los necesite.
+`src/infra/` (infraestructura como código) está reservado por ADR-0013. Se crea con la primera feature que despliegue.
 
 ## Arquitectura
 
@@ -93,6 +94,7 @@ Monolito modular en FastAPI más un servicio de tiempo real en Node con Socket.I
 | 0010 | YouTube como única plataforma del piloto, con salida a un proveedor B2B (sustituye a 0008) |
 | 0011 | Correo transaccional con Amazon SES |
 | 0013 | Monorepo con el código bajo `src/` (sustituye a 0012) |
+| 0014 | Acceso al tiempo real con un ticket de corta duración firmado por el monolito |
 
 Los estándares transversales (capas del monolito, `establishment_id` y RLS en toda tabla, nada de datos personales de clientes…) están en [`architecture/standards.md`](architecture/standards.md).
 
@@ -123,7 +125,7 @@ docker compose up -d --build
 
 | Servicio | URL |
 | -------- | --- |
-| SPA (con `/api` reenviado a la API) | http://localhost:5173 |
+| SPA (con `/api` reenviado a la API y `/socket.io` al tiempo real) | http://localhost:5173 |
 | API (directa) | http://localhost:8000/api/health |
 | Mailpit (correos de prueba) | http://localhost:8025 |
 | PostgreSQL / Redis | `localhost:5432` / `localhost:6379` |
@@ -137,19 +139,19 @@ La API aplica las migraciones al arrancar, y el servicio `worker` envía los cor
 
 | Qué | Dónde | Comando |
 | --- | ----- | ------- |
-| Backend: unitarias e integración contra PostgreSQL real | `src/backend` | `uv run pytest` |
+| Backend: unitarias e integración contra PostgreSQL y Redis reales | `src/backend` | `uv run pytest` |
+| Tiempo real: tickets, salas y reenvío contra Redis real | `src/realtime` | `npm test` |
 | Web: componentes | `src/web` | `npm test` |
 | e2e con Playwright y Mailpit | `src/web` | `npx playwright test` (con el compose levantado) |
 | Carga con k6 | `src/perf` | ver [`src/perf/README.md`](src/perf/README.md) |
 | Escaneo del QR impreso (manual) | `docs/qa` | [`docs/qa/qr-escaneo.md`](docs/qa/qr-escaneo.md) |
 
-El CI (`.github/workflows/ci.yml`) corre lint, tipos y pruebas del backend y de la web solo si cambia su carpeta, las pruebas de integración contra un PostgreSQL de servicio, y comprueba que los tipos de la API generados para la web estén al día.
+El CI (`.github/workflows/ci.yml`) corre lint, tipos y pruebas del backend, de la web y del tiempo real solo si cambia su carpeta. Las pruebas de integración corren contra PostgreSQL y Redis de servicio, y comprueba que los tipos de la API generados para la web estén al día.
 
 ## Pendiente
 
-- **Feature 001:**
-  - la prueba manual de escaneo del QR impreso con iOS y Android (T023);
-  - alinear las rutas de `plan.md` y `tasks.md` con ADR-0013.
+- **Feature 001:** la prueba manual de escaneo del QR impreso con iOS y Android (T023).
+- **Feature 002:** la web (T014–T020): cliente de tiempo real, reproductor con YouTube, tarjeta de la sesión en el panel, e2e y la prueba manual con YouTube real.
 - **Feature de infraestructura**, antes del piloto:
   - CloudFront, ALB, RDS, ECS Fargate;
   - SES fuera del sandbox, con SPF, DKIM y DMARC;
