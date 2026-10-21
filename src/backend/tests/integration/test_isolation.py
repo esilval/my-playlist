@@ -223,3 +223,167 @@ async def test_F001_R015_aviso_de_registro_duplicado_solo_se_encola_en_el_establ
     async with ctx.engine.connect() as connection:
         total = await connection.execute(text("SELECT count(*) FROM establishment"))
         assert total.scalar_one() == 2
+
+
+# Feature 002 (sesión de música): A intenta abrir, cerrar, poner en marcha, informar
+# y consultar la sesión de B (R013, ADR-0009).
+B_SONG = "Canción secreta de B"
+MUSIC_TABLES = ("music_session", "queue_item")
+
+
+async def _b_music_session(ctx: Ctx) -> dict[str, Any]:
+    """B tiene una sesión abierta con una canción sonando, una pendiente y una saltada."""
+    async with ctx.engine.begin() as connection:
+        session_id = (
+            await connection.execute(
+                text(
+                    "INSERT INTO music_session (establishment_id, player_epoch, player_seen_at, "
+                    "version) VALUES (:b, 2, now(), 5) RETURNING id"
+                ),
+                {"b": ctx.ids["b"]},
+            )
+        ).scalar_one()
+        items = {}
+        for position, (title, state, reason) in enumerate(
+            (
+                ("Saltada de B", "skipped", "not_embeddable"),
+                (B_SONG, "playing", None),
+                ("Pendiente de B", "pending", None),
+            ),
+            start=1,
+        ):
+            items[state] = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO queue_item (establishment_id, session_id, position, "
+                        "track_ref, title, state, failure_reason, finished_at) "
+                        "VALUES (:b, :s, :p, 'fake:b', :title, CAST(:state AS queue_item_state), "
+                        "CAST(:reason AS text), CASE WHEN CAST(:reason AS text) IS NULL THEN NULL "
+                        "ELSE now() END) RETURNING id"
+                    ),
+                    {
+                        "b": ctx.ids["b"],
+                        "s": session_id,
+                        "p": position,
+                        "title": title,
+                        "state": state,
+                        "reason": reason,
+                    },
+                )
+            ).scalar_one()
+    # Sin filas de B, un «B no cambió» no probaría nada.
+    seeded = await _b_music(ctx)
+    assert (len(seeded["music_session"]), len(seeded["queue_item"])) == (1, 3)
+    return {"session_id": session_id, "items": items}
+
+
+async def _b_music(ctx: Ctx) -> dict[str, list[str]]:
+    rows: dict[str, list[str]] = {}
+    async with ctx.engine.connect() as connection:
+        for table in MUSIC_TABLES:
+            result = await connection.execute(
+                text(
+                    f"SELECT row_to_json(t)::text AS j FROM {table} t WHERE establishment_id = :e "
+                    "ORDER BY j"
+                ),
+                {"e": ctx.ids["b"]},
+            )
+            rows[table] = list(result.scalars())
+    return rows
+
+
+def _assert_nothing_of_b_music(ctx: Ctx, response: httpx2.Response, b: dict[str, Any]) -> None:
+    _assert_nothing_of_b(ctx, response)
+    body = response.text
+    markers = [B_SONG, "Saltada de B", "Pendiente de B", str(b["session_id"])]
+    markers += [str(item_id) for item_id in b["items"].values()]
+    leaked = [marker for marker in markers if marker in body]
+    assert leaked == [], (response.request.method, str(response.request.url), leaked)
+
+
+async def test_F002_R013_sesion_de_a_no_abre_ni_cierra_la_de_b(ctx: Ctx) -> None:
+    b = await _b_music_session(ctx)
+    b_before = await _b_music(ctx)
+    b_id = str(ctx.ids["b"])
+
+    # Apuntar a B desde el cuerpo o la consulta: las rutas atienden siempre a A.
+    opened = await ctx.a.post(
+        f"/api/owner/music-session?establishment_id={b_id}", json={"establishment_id": b_id}
+    )
+    assert opened.status_code == 201
+    _assert_nothing_of_b_music(ctx, opened, b)
+    closed = await ctx.a.delete(f"/api/owner/music-session?establishment_id={b_id}")
+    assert closed.status_code == 204
+    # El DELETE cerró la de A, no la de B.
+    assert (await ctx.a.get("/api/owner/music-session")).json()["status"] == "closed"
+    # Y sin sesión propia, cerrar otra vez no toca la de B.
+    again = await ctx.a.delete("/api/owner/music-session")
+    assert again.status_code == 204
+
+    assert await _b_music(ctx) == b_before
+    async with ctx.engine.connect() as connection:
+        own = await connection.execute(
+            text("SELECT count(*) FROM music_session WHERE establishment_id = :a"),
+            {"a": ctx.ids["a"]},
+        )
+        assert own.scalar_one() == 1
+
+
+async def test_F002_R013_reproductor_de_a_no_reclama_ni_informa_en_b(ctx: Ctx) -> None:
+    b = await _b_music_session(ctx)
+    b_before = await _b_music(ctx)
+    b_id = str(ctx.ids["b"])
+    assert (await ctx.a.post("/api/owner/music-session")).status_code == 201
+
+    # A pone en marcha su reproductor, también apuntando a B: recibe su sesión, vacía.
+    claim = await ctx.a.post(f"/api/owner/music-session/player?establishment_id={b_id}")
+    assert claim.status_code == 200
+    assert (claim.json()["epoch"], claim.json()["current"]) == (1, None)
+    _assert_nothing_of_b_music(ctx, claim, b)
+
+    # Informar con las canciones de B, con la época de A o la de B: no existen para A.
+    for item_id in b["items"].values():
+        for epoch in (1, 2):
+            for type in ("started", "ended", "failed"):
+                response = await ctx.a.post(
+                    "/api/owner/music-session/player/events",
+                    json={"epoch": epoch, "item_id": str(item_id), "type": type},
+                )
+                # Con la época de A, la canción no es de su sesión; con la de B, la época
+                # ni siquiera es la vigente de A.
+                expected = (
+                    (404, {"error": "not_found"})
+                    if epoch == 1
+                    else (409, {"error": "player_superseded"})
+                )
+                assert (response.status_code, response.json()) == expected, response.text
+                _assert_nothing_of_b_music(ctx, response, b)
+
+    # El latido con la época de B tampoco cuenta para B.
+    beat = await ctx.a.post(
+        f"/api/owner/music-session/player/heartbeat?establishment_id={b_id}", json={"epoch": 2}
+    )
+    assert (beat.status_code, beat.json()) == (409, {"error": "player_superseded"})
+    _assert_nothing_of_b_music(ctx, beat, b)
+
+    assert await _b_music(ctx) == b_before
+
+
+async def test_F002_R013_get_music_session_de_a_no_muestra_lo_que_suena_en_b(ctx: Ctx) -> None:
+    b = await _b_music_session(ctx)
+    b_id = str(ctx.ids["b"])
+
+    # Sin sesión propia, A no ve la de B: para A no hay ninguna abierta.
+    closed = await ctx.a.get(f"/api/owner/music-session?establishment_id={b_id}")
+    assert closed.json() == {"status": "closed", "session": None}
+    _assert_nothing_of_b_music(ctx, closed, b)
+
+    assert (await ctx.a.post("/api/owner/music-session")).status_code == 201
+    own = await ctx.a.get(f"/api/owner/music-session?establishment_id={b_id}")
+    session = own.json()["session"]
+    assert (session["now_playing"], session["failures"], session["player_active"]) == (
+        None,
+        [],
+        False,
+    )
+    _assert_nothing_of_b_music(ctx, own, b)

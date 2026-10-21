@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-10-21  |
-| Estado | Approved · d78a3935dc8b       |
+| Estado | Approved · 2f389f03fabf       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -24,7 +24,7 @@
 
 ### T001 — Migración de la sesión de música y la cola `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003, R006, R013
 - **Depende de:** —
 - **Archivos:** `src/backend/migrations/versions/0002_music_sessions.py`, `src/backend/tests/integration/test_sessions_schema.py`
@@ -39,10 +39,10 @@
 
 ### T002 — Dominio: sesión de música y máquina de estados de la cola `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003, R005, R006, R007, R010, R011, R012
 - **Depende de:** —
-- **Archivos:** `src/backend/app/sessions/__init__.py`, `src/backend/app/sessions/domain/{__init__.py,music_session.py,queue.py,ports.py}`, `src/backend/tests/unit/test_queue_state.py`, `src/backend/tests/unit/test_music_session_rules.py`
+- **Archivos:** `src/backend/app/sessions/__init__.py`, `src/backend/app/sessions/domain/{__init__.py,music_session.py,queue.py,ports.py}`, `src/backend/tests/unit/test_queue_state.py`, `src/backend/tests/unit/test_music_session_rules.py`, `src/backend/tests/unit/test_health.py`
 - **Hecho cuando:** pasan:
   - `test_F002_R003_abrir_con_una_abierta_no_crea_otra`;
   - `test_F002_R005_avanza_en_el_orden_de_la_cola`;
@@ -58,10 +58,10 @@
 
 ### T003 — Publicación de eventos por Redis
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R008, R014
 - **Depende de:** T002
-- **Archivos:** `src/backend/app/sessions/infrastructure/{__init__.py,redis_publisher.py,memory_publisher.py}`, `src/backend/app/shared/config.py` (`REDIS_URL`), `src/backend/pyproject.toml`, `src/backend/uv.lock`, `src/backend/tests/integration/test_event_publisher.py`
+- **Archivos:** `src/backend/app/sessions/infrastructure/{__init__.py,redis_publisher.py,memory_publisher.py}`, `src/backend/app/shared/config.py` (`REDIS_URL`), `src/backend/pyproject.toml`, `src/backend/uv.lock`, `src/backend/tests/integration/test_event_publisher.py`, `.github/workflows/ci.yml` (Redis en `backend-integration`)
 - **Hecho cuando:** pasan, contra el Redis de docker-compose:
   - `test_F002_R014_publica_en_el_canal_del_establecimiento` (canal `est:{id}`, con `type`, `session_id` y `version`);
   - `test_F002_R008_evento_sin_datos_de_la_cuenta` (el cuerpo solo lleva los campos de los contratos del plan).
@@ -70,10 +70,10 @@
 
 ### T004 — Unidad de trabajo y casos de uso de la sesión de música
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R003, R011
 - **Depende de:** T001, T002, T003
-- **Archivos:** `src/backend/app/sessions/infrastructure/repositories.py`, `src/backend/app/sessions/application/{__init__.py,open_session.py,close_session.py,get_session.py}`, `src/backend/tests/integration/test_music_session_use_cases.py`
+- **Archivos:** `src/backend/app/sessions/infrastructure/repositories.py`, `src/backend/app/sessions/application/{__init__.py,open_session.py,close_session.py,get_session.py}`, `src/backend/tests/integration/test_music_session_use_cases.py`, `src/backend/app/sessions/application/publishing.py`, `src/backend/app/sessions/domain/ports.py`
 - **Hecho cuando:** pasan:
   - `test_F002_R001_abrir_deja_la_sesion_abierta_con_la_cola_vacia`;
   - `test_F002_R003_dos_aperturas_concurrentes_dejan_una_sola_sesion` (con la cola intacta);
@@ -84,10 +84,10 @@
 
 ### T005 — Rutas de la sesión de música
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R002, R003, R011, R013
 - **Depende de:** T004
-- **Archivos:** `src/backend/app/sessions/api/{__init__.py,music_session.py}`, `src/backend/app/main.py`, `src/backend/tests/integration/test_music_session.py`
+- **Archivos:** `src/backend/app/sessions/api/{__init__.py,music_session.py}`, `src/backend/app/main.py`, `src/backend/tests/integration/test_music_session.py`, `src/backend/app/sessions/application/open_session.py`, `src/backend/app/sessions/infrastructure/redis_publisher.py`, `src/backend/tests/integration/api.py`
 - **Hecho cuando:** pasan:
   - `test_F002_R001_post_abre_la_sesion_201`;
   - `test_F002_R002_correo_sin_verificar_da_403_y_sigue_cerrada`;
@@ -99,10 +99,10 @@
 
 ### T006 — Puesta en marcha del reproductor y latido
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R004, R008, R009, R010, R014
 - **Depende de:** T005
-- **Archivos:** `src/backend/app/sessions/application/{claim_player.py,heartbeat.py}`, `src/backend/app/sessions/api/player.py`, `src/backend/tests/integration/test_player.py`
+- **Archivos:** `src/backend/app/sessions/application/{claim_player.py,heartbeat.py}`, `src/backend/app/sessions/api/player.py`, `src/backend/tests/integration/test_player.py`, `src/backend/app/main.py`
 - **Hecho cuando:** pasan:
   - `test_F002_R004_poner_en_marcha_devuelve_la_primera_pendiente`;
   - `test_F002_R009_sin_sesion_abierta_da_409_no_open_session`;
@@ -114,10 +114,10 @@
 
 ### T007 — Informes del reproductor y avance de la cola
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R005, R006, R007, R010, R011, R012
 - **Depende de:** T006
-- **Archivos:** `src/backend/app/sessions/application/report_player_event.py`, `src/backend/app/sessions/api/player.py`, `src/backend/tests/integration/test_player.py`
+- **Archivos:** `src/backend/app/sessions/application/report_player_event.py`, `src/backend/app/sessions/api/player.py`, `src/backend/tests/integration/test_player.py`, `src/backend/app/main.py`
 - **Hecho cuando:** pasan:
   - `test_F002_R005_ended_devuelve_la_siguiente_en_orden`;
   - `test_F002_R006_poner_en_marcha_otra_vez_no_repite_sonadas_ni_saltadas`;
@@ -129,10 +129,10 @@
 
 ### T008 — Agregar canciones a la cola: interfaz de C2 y herramienta de desarrollo
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R008
 - **Depende de:** T004
-- **Archivos:** `src/backend/app/sessions/application/enqueue_track.py`, `src/backend/app/sessions/interface.py`, `src/backend/app/sessions/devtools.py`, `src/backend/tests/integration/test_enqueue_track.py`
+- **Archivos:** `src/backend/app/sessions/application/enqueue_track.py`, `src/backend/app/sessions/interface.py`, `src/backend/app/sessions/devtools.py`, `src/backend/tests/integration/test_enqueue_track.py`, `src/backend/app/sessions/domain/music_session.py`, `src/backend/tests/unit/test_music_session_rules.py`, `src/backend/tests/integration/test_player.py`
 - **Hecho cuando:** pasan:
   - `test_F002_R008_enqueue_agrega_al_final_y_publica_queue_changed`;
   - `test_F002_R008_enqueue_sin_sesion_abierta_lanza_no_open_session`;
@@ -142,10 +142,10 @@
 
 ### T009 — Ticket de tiempo real en el monolito `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R013, R014
 - **Depende de:** T005
-- **Archivos:** `src/backend/app/shared/realtime_ticket.py`, `src/backend/app/sessions/api/realtime.py`, `src/backend/app/shared/config.py` (`REALTIME_TICKET_SECRET`), `src/backend/tests/unit/test_realtime_ticket.py`, `src/backend/tests/integration/test_realtime_ticket_api.py`, `src/realtime/test/fixtures/ticket-vectors.json`
+- **Archivos:** `src/backend/app/shared/realtime_ticket.py`, `src/backend/app/sessions/api/realtime.py`, `src/backend/app/shared/config.py` (`REALTIME_TICKET_SECRET`), `src/backend/tests/unit/test_realtime_ticket.py`, `src/backend/tests/integration/test_realtime_ticket_api.py`, `src/realtime/test/fixtures/ticket-vectors.json`, `src/backend/app/main.py`, `src/backend/tests/unit/test_email.py`, `src/backend/tests/integration/test_enqueue_track.py`
 - **Hecho cuando:** pasan:
   - `test_F002_R013_ticket_lleva_el_establecimiento_de_la_sesion` (y no el del cuerpo);
   - `test_F002_R013_ticket_caduca_a_los_60_s` (con reloj falso);
@@ -156,7 +156,7 @@
 
 ### T010 — Batería de aislamiento de la sesión de música
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R013
 - **Depende de:** T006, T007, T008
 - **Archivos:** `src/backend/tests/integration/test_isolation.py`
@@ -199,7 +199,7 @@
 - **Estado:** `[ ]`
 - **Requisitos:** R014
 - **Depende de:** T003, T012
-- **Archivos:** `src/realtime/Dockerfile`, `src/realtime/.dockerignore`, `src/realtime/README.md`, `src/docker-compose.yml` (servicio `realtime`, `REDIS_URL` y `REALTIME_TICKET_SECRET`), `src/.env.example`, `src/web/vite.config.ts` (proxy `/socket.io`), `.github/workflows/ci.yml` (trabajo `realtime`)
+- **Archivos:** `src/realtime/Dockerfile`, `src/realtime/.dockerignore`, `src/realtime/README.md`, `src/docker-compose.yml` (servicio `realtime`, y `REDIS_URL` y el mismo `REALTIME_TICKET_SECRET` en `realtime`, `api` y `worker`), `src/.env.example`, `src/web/vite.config.ts` (proxy `/socket.io`), `.github/workflows/ci.yml` (trabajo `realtime`)
 - **Hecho cuando:**
   - `docker compose up -d --build` deja `realtime` en `healthy`, junto con el resto.
   - Desde el navegador, `http://localhost:5173/socket.io/?EIO=4&transport=polling` responde a través del proxy de Vite.

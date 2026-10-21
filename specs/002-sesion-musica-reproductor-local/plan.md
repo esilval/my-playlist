@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-10-21         |
-| Estado | Approved · 128be48d1238              |
+| Estado | Approved · f3c894add322              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -151,8 +151,10 @@ La feature añade al monolito el módulo de sesión y cola (C2, `src/backend/app
 - **Decisión:**
   - **Servicio:** `src/realtime/`, en Node 22 + TypeScript con Socket.IO. Se suscribe por patrón a los canales `est:*` de Redis y reenvía cada mensaje a la sala del mismo nombre.
   - **Autenticación:** un ticket de 60 s firmado con HMAC, según ADR-0014. El servicio no lee la base de datos ni llama al monolito (S5).
-  - **Publicación:** C2 publica por el puerto `EventPublisher`, cuyo adaptador es `RedisEventPublisher`, después de confirmar la transacción.
-  - **Eventos:** `session.opened`, `session.closed`, `player.claimed`, `track.started`, `track.failed` y `queue.changed`. Cada uno lleva `session_id` y la `version` de la sesión.
+  - **Publicación:** C2 publica por el puerto `EventPublisher`, cuyo adaptador es `RedisEventPublisher`, después de confirmar la transacción (`application/publishing.py`).
+    - Va por el mejor esfuerzo: si Redis no responde, el cambio ya está guardado, el fallo queda en el log y la petición no falla.
+    - El cliente de Redis espera como mucho 1 s, al conectar y al publicar, para que una petición no se cuelgue después del commit.
+  - **Eventos:** `session.opened`, `session.closed`, `player.claimed`, `track.started`, `track.failed` y `queue.changed`. Cada uno lleva `session_id` y la `version` de la sesión. `queue.changed` se emite cuando la cola cambia sin otro evento más concreto: al entrar una canción y al terminar la que sonaba (`ended`), porque cada cambio incrementa la versión (D2).
   - **Resincronización:** si un cliente ve un salto de versión, o se reconecta, pide el estado completo a la API (`GET /api/owner/music-session`).
 - **Alternativas descartadas:**
   - **Bandeja de salida transaccional para los eventos:** garantiza la entrega, pero con resincronización por versión un evento perdido solo retrasa la pantalla. Se puede añadir si falla en la práctica.
@@ -194,8 +196,9 @@ La feature añade al monolito el módulo de sesión y cola (C2, `src/backend/app
 - **Decisión:**
   - **Interfaz de C2:** el caso de uso interno `EnqueueTrack`, que expone `app/sessions/interface.py`, agrega una canción al final de la cola de la sesión abierta y publica `queue.changed`. No tiene endpoint HTTP.
   - **Herramienta de desarrollo:** `python -m app.sessions.devtools enqueue --email … --title … --ref …` usa ese caso de uso para la demo local y para las pruebas e2e (con `docker compose exec api …`). Se niega a correr con `ENV=production`.
+    - Es una raíz de composición, como `main.py` y `worker.py`: busca el establecimiento por el correo con la infraestructura de C1 (`find_owner_by_email`) y agrega la canción por la interfaz de C2. Por eso, aunque vive en `app/sessions/`, puede importar piezas de C1; ningún otro archivo de C2 lo hace.
   - **Compose:** añade `realtime`. El proxy de Vite reenvía `/socket.io`.
-  - **CI:** añade el trabajo `realtime` (lint, tipos y Vitest contra un Redis de servicio), filtrado por `src/realtime/**`.
+  - **CI:** añade el trabajo `realtime` (lint, tipos y Vitest contra un Redis de servicio), filtrado por `src/realtime/**`. El trabajo `backend-integration` también tiene un Redis de servicio, porque las pruebas de publicación de eventos corren contra uno real.
 - **Alternativas descartadas:**
   - **Un endpoint de pruebas en la API:** quedaría expuesto en producción si se configura mal.
   - **Insertar filas a mano con SQL en las pruebas e2e:** no publica `queue.changed`, y R008 no se podría probar.
@@ -235,7 +238,8 @@ La feature añade al monolito el módulo de sesión y cola (C2, `src/backend/app
 | ---------- | ------ | -------------------- |
 | `src/backend/app/sessions/domain/` | Máquina de estados de la cola y reglas de la sesión: una abierta, transiciones (incluida la de la canción que suena al cerrar), épocas y reproductor activo; puertos `EventPublisher` y `Clock` | R003, R005, R006, R007, R010, R011, R012 |
 | `src/backend/app/sessions/application/` | Casos de uso: abrir, cerrar y consultar la sesión; poner en marcha el reproductor; informar de eventos; latido; `EnqueueTrack` | R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R014 |
-| `src/backend/app/sessions/infrastructure/` | Repositorio SQLAlchemy con bloqueo de la sesión; `RedisEventPublisher` | R003, R006, R008, R011, R014 |
+| `src/backend/app/sessions/infrastructure/` | Repositorio SQLAlchemy con bloqueo de la sesión; `RedisEventPublisher` (con tiempo de espera de 1 s) y publicador en memoria para las pruebas | R003, R006, R008, R011, R014 |
+| `src/backend/app/shared/realtime_ticket.py` | Emisión y verificación del ticket de tiempo real (ADR-0014); `REALTIME_TICKET_SECRET` en `config.py` | R013, R014 |
 | `src/backend/app/sessions/api/` | Rutas `/api/owner/music-session/*` y `/api/owner/realtime-ticket` | R001, R002, R003, R004, R009, R010, R011, R013, R014 |
 | `src/backend/app/sessions/devtools.py` | Herramienta de desarrollo `enqueue` (D9) | R008 |
 | `src/backend/migrations/versions/0002_music_sessions.py` | Tablas `music_session` y `queue_item`, tipos, índices únicos parciales y RLS | R003, R006, R013 |
@@ -257,17 +261,17 @@ La feature añade al monolito el módulo de sesión y cola (C2, `src/backend/app
 
 ## Contratos
 
-Todos los cuerpos van en JSON. Las rutas piden la sesión iniciada del propietario y siguen la protección CSRF de la feature 001.
+Todos los cuerpos van en JSON. Las rutas piden la sesión iniciada del propietario y siguen la protección CSRF de la feature 001. Los errores con código propio llevan el cuerpo `{error: "<código>"}`, como el `403 email_not_verified` del QR de la feature 001. Un campo opcional que no tiene valor (`session`, `now_playing`, `current`, `next`) viaja como `null`.
 
 | Método y ruta | Entrada | Respuestas |
 | ------------- | ------- | ---------- |
 | `POST /api/owner/music-session` | — | `201 {session}` si la abre · `200 {session}` si ya estaba abierta (R003) · `403 email_not_verified` (R002) · `401` |
 | `DELETE /api/owner/music-session` | — | `204`, también si no había ninguna abierta (R011) · `401` |
-| `GET /api/owner/music-session` | — | `200 {status: "open" \| "closed", session?: {id, opened_at, version, now_playing?: Track, player_active: bool, failures: [{title, failed_at}]}}` · `401` |
+| `GET /api/owner/music-session` | — | `200 {status: "open", session: {id, opened_at, version, now_playing: Track \| null, player_active: bool, failures: [{title, failed_at}]}}` · `200 {status: "closed", session: null}` · `401` |
 | `POST /api/owner/music-session/player` | — | `200 {epoch, current?: Track, next?: Track}` (R004, R010) · `409 no_open_session` (R009) · `401` |
-| `POST /api/owner/music-session/player/events` | `{epoch, item_id, type: "started" \| "ended" \| "failed", reason?}` | `200 {current?: Track, next?: Track, version}` (idempotente, D4) · `409 player_superseded` · `409 no_open_session` · `401` |
+| `POST /api/owner/music-session/player/events` | `{epoch, item_id, type: "started" \| "ended" \| "failed", reason?}`, con `reason` de como mucho 100 caracteres | `200 {current?: Track, next?: Track, version}` (idempotente, D4) · `404 not_found` si la canción no es de la sesión abierta, con el mismo cuerpo exista o no en otro establecimiento (R013) · `409 player_superseded` · `409 no_open_session` · `401` · `422` |
 | `POST /api/owner/music-session/player/heartbeat` | `{epoch}` | `200 {version}` (D3) · `409 player_superseded` · `409 no_open_session` · `401` (D11) |
-| `POST /api/owner/realtime-ticket` | `{role: "owner" \| "player"}` | `200 {ticket, expires_in: 60}` (ADR-0014) · `401` |
+| `POST /api/owner/realtime-ticket` | `{role: "owner" \| "player"}` | `200 {ticket, expires_in: 60}` con `Cache-Control: no-store` (ADR-0014) · `401` · `422` |
 
 `Track = {item_id, title, track_ref}`. El reproductor pasa `track_ref` a su adaptador de proveedor tal cual.
 
@@ -280,7 +284,9 @@ Todos los cuerpos van en JSON. Las rutas piden la sesión iniciada del propietar
 | `player.claimed` | `epoch` | reproductor anterior (se detiene, R010), panel |
 | `track.started` | `item_id`, `title` | panel (R014) |
 | `track.failed` | `item_id`, `title` | panel (R007) |
-| `queue.changed` | — | reproductor en espera (R008) |
+| `queue.changed` | — | reproductor en espera (R008); también se emite al terminar una canción (D6) |
+
+**Formato del ticket de tiempo real** (ADR-0014): `base64url(JSON {est, role, exp, jti})` + `.` + `base64url(HMAC-SHA256(secreto, segmento))`. La firma va sobre el segmento tal como viaja, así que C6 lo valida sin reproducir el JSON. Los vectores que comparten el monolito y C6 están en `src/realtime/test/fixtures/ticket-vectors.json`.
 
 **Interfaz de C2 para otros módulos** (`app/sessions/interface.py`): `EnqueueTrack(establishment_id, track_ref, title) -> QueueItem`, que lanza `NoOpenSession` si no hay sesión abierta. La usarán B03 y B05.
 
@@ -354,12 +360,16 @@ classDiagram
   class MusicSession {
     +open()
     +close()
-    +claim_player() epoch
+    +enqueue(track_ref, title) QueueItem
+    +claim_player() PlayerClaim
+    +heartbeat(epoch) version
     +apply(PlayerEvent) Progress
   }
   class QueueItem {
     +state
-    +start()
+    +play()
+    +restart()
+    +mark_started()
     +finish()
     +skip(reason)
     +discard()
@@ -371,9 +381,16 @@ classDiagram
   class RedisEventPublisher
   class SessionsUnitOfWork {
     <<puerto>>
-    +locked_open_session()
+    +call(establishment_id) SessionsRepository
+  }
+  class SessionsRepository {
+    <<puerto>>
+    +open_session(lock)
+    +add(session)
+    +save(session)
   }
   class SqlSessionsUnitOfWork
+  class SqlSessionsRepository
   class PlayerController {
     +start()
     +onEnded()
@@ -391,6 +408,8 @@ classDiagram
   MusicSession "1" o-- "*" QueueItem
   RedisEventPublisher ..|> EventPublisher
   SqlSessionsUnitOfWork ..|> SessionsUnitOfWork
+  SqlSessionsRepository ..|> SessionsRepository
+  SessionsUnitOfWork --> SessionsRepository
   YouTubePlaybackProvider ..|> PlaybackProvider
   FakePlaybackProvider ..|> PlaybackProvider
   PlayerController --> PlaybackProvider
@@ -439,5 +458,15 @@ classDiagram
 Todos los requisitos MUST de `spec.md` (R001–R013 y R015) aparecen en la tabla de componentes y en la de pruebas. El SHOULD R014 también está cubierto. El plan no introduce ningún requisito: la herramienta `enqueue` (D9) es solo para desarrollo y pruebas, porque que una canción entre en la cola es trabajo de B03 y B05.
 
 La enmienda de la spec del 2026-10-21 (R015 y el criterio nuevo de R012) se cubre con D11, el reenvío de informes de D4 y sus pruebas. Esta misma pasada recoge dos hallazgos de `/sdd:analyze`: el latido devuelve la versión (D3) y la canción que suena al cerrar queda `played` (D2).
+
+La segunda enmienda del 2026-10-21 alinea el plan con la implementación del backend (T001–T010):
+- el `404 not_found` de los informes y la forma de los errores y los valores nulos en los contratos;
+- que `ended` también emite `queue.changed`;
+- la publicación por el mejor esfuerzo con tiempo de espera, y Redis en el CI de integración;
+- `devtools` como raíz de composición;
+- el formato del ticket;
+- el diagrama de clases tal como quedó el código.
+
+No cambia ninguna decisión ni introduce requisitos.
 
 La autenticación en el tiempo real sigue **ADR-0014**, que se propuso desde este plan y se aceptó con `/architecture:review`.

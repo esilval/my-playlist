@@ -75,5 +75,11 @@ def anyio_backend() -> str:
 def test_produccion_exige_ses() -> None:
     with pytest.raises(ValidationError, match="SES"):
         Settings(env="production", email_backend="smtp", data_policy_version="2026-10")
-    settings = Settings(env="production", email_backend="ses", data_policy_version="2026-10")
+    settings = Settings(
+        env="production",
+        email_backend="ses",
+        data_policy_version="2026-10",
+        # Producción también exige el secreto propio del tiempo real (feature 002, ADR-0014).
+        realtime_ticket_secret="secreto-de-produccion-de-al-menos-32-caracteres",
+    )
     assert settings.email_backend == "ses"
