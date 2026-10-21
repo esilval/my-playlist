@@ -1,6 +1,11 @@
 # Entorno local de MyPlaylist (ADR-0013, plan D10).
-# El navegador solo ve http://localhost:5173: Vite sirve la SPA y reenvía /api a `api`.
+# El navegador solo ve http://localhost:5173: Vite sirve la SPA y reenvía /api a `api`
+# y /socket.io a `realtime` (feature 002, plan D6).
 name: myplaylist
+
+# El monolito firma los tickets de tiempo real y `realtime` los valida: tienen que usar
+# el mismo secreto (ADR-0014). En local vale el de desarrollo de los dos servicios.
+x-realtime-ticket-secret: &realtime-ticket-secret ${REALTIME_TICKET_SECRET:-solo-para-desarrollo-local-no-usar-en-produccion}
 
 services:
   postgres:
@@ -52,10 +57,15 @@ services:
       SMTP_PORT: "1025"
       PUBLIC_BASE_URL: http://localhost:5173
       DATA_POLICY_VERSION: ${DATA_POLICY_VERSION:-0000-borrador}
+      # Eventos de la sesión de música hacia `realtime` (feature 002, plan D6).
+      REDIS_URL: redis://redis:6379/0
+      REALTIME_TICKET_SECRET: *realtime-ticket-secret
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       mailpit:
         condition: service_healthy
@@ -74,6 +84,8 @@ services:
       # Espera a la API, que es quien aplica las migraciones.
       api:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       # Latido reciente: el bucle del trabajador sigue vivo.
       test: ["CMD", "python", "-c", "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/worker-heartbeat') > 30)"]
@@ -82,16 +94,37 @@ services:
       retries: 10
       start_period: 10s
 
+  realtime:
+    build: ./realtime
+    environment:
+      ENV: local
+      PORT: "3001"
+      REDIS_URL: redis://redis:6379/0
+      REALTIME_TICKET_SECRET: *realtime-ticket-secret
+    depends_on:
+      # Sin Redis no arranca: el reenvío se suscribe antes de abrir el puerto.
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
   web:
     build:
       context: ./web
       dockerfile: Dockerfile.dev
     environment:
       API_PROXY_TARGET: http://api:8000
+      REALTIME_PROXY_TARGET: http://realtime:3001
     ports:
       - "${WEB_PORT:-5173}:5173"
     depends_on:
       api:
+        condition: service_healthy
+      realtime:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:5173/api/health"]

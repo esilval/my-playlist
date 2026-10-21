@@ -167,7 +167,7 @@
 
 ### T011 — Servicio de tiempo real: proyecto, tickets y salas
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R013
 - **Depende de:** T009
 - **Archivos:** `src/realtime/{package.json,package-lock.json,tsconfig.json,eslint.config.js,.nvmrc,vitest.config.ts}`, `src/realtime/src/{server.ts,ticket.ts,rooms.ts}`, `src/realtime/test/{ticket.test.ts,rooms.test.ts}`
@@ -183,7 +183,7 @@
 
 ### T012 — Servicio de tiempo real: reenvío de Redis a las salas
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R008, R010, R011, R014
 - **Depende de:** T011
 - **Archivos:** `src/realtime/src/relay.ts`, `src/realtime/src/server.ts`, `src/realtime/test/relay.test.ts`
@@ -196,7 +196,7 @@
 
 ### T013 — Entorno local y CI para el tiempo real
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R014
 - **Depende de:** T003, T012
 - **Archivos:** `src/realtime/Dockerfile`, `src/realtime/.dockerignore`, `src/realtime/README.md`, `src/docker-compose.yml` (servicio `realtime`, y `REDIS_URL` y el mismo `REALTIME_TICKET_SECRET` en `realtime`, `api` y `worker`), `src/.env.example`, `src/web/vite.config.ts` (proxy `/socket.io`), `.github/workflows/ci.yml` (trabajo `realtime`)
