@@ -27,4 +27,3 @@ src/web/test-results/
 
 # Servicio de tiempo real
 src/realtime/dist/
-src/realtime/package-lock.json

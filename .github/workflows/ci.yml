@@ -153,9 +153,8 @@ jobs:
         with:
           node-version-file: src/realtime/.nvmrc
           cache: npm
-          # Sin package-lock.json en el repositorio: la caché se indexa por package.json.
-          cache-dependency-path: src/realtime/package.json
-      - run: npm install
+          cache-dependency-path: src/realtime/package-lock.json
+      - run: npm ci
       - run: npm run lint
       - run: npm run build
       - run: npm test

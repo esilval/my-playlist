@@ -2,9 +2,8 @@
 # final solo lleva las dependencias de ejecución.
 FROM node:22-alpine AS build
 WORKDIR /realtime
-# Sin package-lock.json en el repositorio: las versiones salen de los rangos de package.json.
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
@@ -12,8 +11,8 @@ RUN npm run build
 FROM node:22-alpine
 WORKDIR /realtime
 ENV NODE_ENV=production
-COPY package.json ./
-RUN npm install --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 COPY --from=build /realtime/dist ./dist
 USER node
 EXPOSE 3001
