@@ -34,6 +34,7 @@ async def api_client(app: FastAPI) -> AsyncIterator[httpx2.AsyncClient]:
         headers={"X-MyPlaylist-Client": "web", "Origin": PUBLIC_BASE_URL},
     ) as client:
         yield client
+    await app.state.event_publisher.aclose()
     await app.state.db.dispose()
 
 

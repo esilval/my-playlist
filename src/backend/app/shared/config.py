@@ -6,12 +6,19 @@ from typing import Literal
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Secreto de desarrollo para los tickets de tiempo real (ADR-0014). Sirve en local y en
+# pruebas, como las credenciales locales de PostgreSQL; producción no arranca con él.
+LOCAL_REALTIME_TICKET_SECRET = "solo-para-desarrollo-local-no-usar-en-produccion"
+MIN_REALTIME_TICKET_SECRET_LENGTH = 32
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     env: Literal["local", "test", "production"] = "local"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/myplaylist"
+    # Transporte de los eventos hacia el servicio de tiempo real (ADR-0005, plan D6 de 002).
+    redis_url: str = "redis://localhost:6379/0"
     # Argon2id (plan D3), fijado con perf/accounts.js (T023): la configuración mínima de
     # OWASP (19 MiB, 2 pasadas, 1 hilo), unos 20 ms por hash. Con los 150 ms de partida
     # (64 MiB, 3 pasadas), 50 registros a la vez daban p95 de 4,9 s en local.
@@ -30,6 +37,8 @@ class Settings(BaseSettings):
     data_policy_version: str = "0000-borrador"
     # Origen público de la SPA: enlaces de los correos y URL del QR (plan D1, D10).
     public_base_url: str = "http://localhost:5173"
+    # Secreto que comparten el monolito y el servicio de tiempo real (ADR-0014).
+    realtime_ticket_secret: str = LOCAL_REALTIME_TICKET_SECRET
 
     @model_validator(mode="after")
     def _production_sends_with_ses(self) -> "Settings":
@@ -39,6 +48,14 @@ class Settings(BaseSettings):
             raise ValueError(
                 "en producción hace falta la política de tratamiento definitiva (R022): "
                 "la versión vigente es el borrador"
+            )
+        if self.env == "production" and (
+            self.realtime_ticket_secret == LOCAL_REALTIME_TICKET_SECRET
+            or len(self.realtime_ticket_secret) < MIN_REALTIME_TICKET_SECRET_LENGTH
+        ):
+            raise ValueError(
+                "en producción hace falta REALTIME_TICKET_SECRET propio, de al menos "
+                f"{MIN_REALTIME_TICKET_SECRET_LENGTH} caracteres (ADR-0014)"
             )
         return self
 

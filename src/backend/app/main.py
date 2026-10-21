@@ -24,10 +24,20 @@ from app.accounts.infrastructure.policy_files import FilePolicyStore
 from app.accounts.infrastructure.qr_image import SegnoQrImageRenderer
 from app.accounts.infrastructure.repositories import SqlAccountsUnitOfWork
 from app.accounts.interface import EstablishmentByPublicCode, ResolveOwner
+from app.sessions.api import music_session, player, realtime
+from app.sessions.application.claim_player import ClaimPlayer
+from app.sessions.application.close_session import CloseMusicSession
+from app.sessions.application.get_session import GetMusicSession
+from app.sessions.application.heartbeat import PlayerHeartbeat
+from app.sessions.application.open_session import OpenMusicSession
+from app.sessions.application.report_player_event import ReportPlayerEvent
+from app.sessions.infrastructure.redis_publisher import RedisEventPublisher
+from app.sessions.infrastructure.repositories import SqlSessionsUnitOfWork
 from app.shared.clock import SystemClock
 from app.shared.config import Settings, get_settings
 from app.shared.csrf import CsrfMiddleware, HstsMiddleware
 from app.shared.db import Database
+from app.shared.realtime_ticket import RealtimeTicketIssuer
 
 health_router = APIRouter()
 
@@ -61,10 +71,13 @@ def create_app(
     policy_store.get(settings.data_policy_version)
 
     db = Database.from_url(settings.database_url, role="app_api")
+    # Eventos de la sesión de música hacia el tiempo real (plan D6 de la feature 002).
+    publisher = RedisEventPublisher.from_url(settings.redis_url)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
+        await publisher.aclose()
         await db.dispose()
 
     app = FastAPI(title="MyPlaylist API", lifespan=lifespan)
@@ -73,6 +86,7 @@ def create_app(
     app.add_middleware(HstsMiddleware)
     app.state.settings = settings
     app.state.db = db
+    app.state.event_publisher = publisher
     app.state.policy_store = policy_store
     unit_of_work = SqlAccountsUnitOfWork(db)
     hasher = Argon2PasswordHasher.from_settings(settings)
@@ -105,10 +119,29 @@ def create_app(
         current_policy_version=settings.data_policy_version,
         public_base_url=settings.public_base_url,
     )
+    sessions = SqlSessionsUnitOfWork(db)
+    app.state.open_music_session = OpenMusicSession(
+        unit_of_work=sessions, publisher=publisher, clock=clock
+    )
+    app.state.close_music_session = CloseMusicSession(
+        unit_of_work=sessions, publisher=publisher, clock=clock
+    )
+    app.state.get_music_session = GetMusicSession(unit_of_work=sessions, clock=clock)
+    app.state.claim_player = ClaimPlayer(unit_of_work=sessions, publisher=publisher, clock=clock)
+    app.state.player_heartbeat = PlayerHeartbeat(unit_of_work=sessions, clock=clock)
+    app.state.realtime_tickets = RealtimeTicketIssuer(
+        secret=settings.realtime_ticket_secret, clock=clock
+    )
+    app.state.report_player_event = ReportPlayerEvent(
+        unit_of_work=sessions, publisher=publisher, clock=clock
+    )
     app.include_router(health_router, prefix="/api")
     app.include_router(public.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
     app.include_router(owner.router, prefix="/api")
+    app.include_router(music_session.router, prefix="/api")
+    app.include_router(player.router, prefix="/api")
+    app.include_router(realtime.router, prefix="/api")
     return app
 
 

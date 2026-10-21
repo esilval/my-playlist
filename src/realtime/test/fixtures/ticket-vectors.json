@@ -1,0 +1,62 @@
+{
+  "description": "Vectores del ticket de tiempo real (ADR-0014). Los genera y comprueba el monolito (tests/unit/test_realtime_ticket.py); C6 los valida en src/realtime/test/ticket.test.ts.",
+  "secret": "secreto-de-los-vectores-de-prueba-0123456789",
+  "issued_at": 1792612800,
+  "ttl_seconds": 60,
+  "valid": [
+    {
+      "name": "propietario",
+      "ticket": "eyJlc3QiOiI2ZjFjMmI0YS04ZDNlLTRmNWEtOWI3Yy0xZDJlM2Y0YTViNmMiLCJleHAiOjE3OTI2MTI4NjAsImp0aSI6Imp0aS1vd25lciIsInJvbGUiOiJvd25lciJ9.crJuKC5_zQ5L0DtsR6avnkUmMiOlioyX-W5RfJ4dyX8",
+      "now": 1792612830,
+      "establishment_id": "6f1c2b4a-8d3e-4f5a-9b7c-1d2e3f4a5b6c",
+      "role": "owner",
+      "ticket_id": "jti-owner"
+    },
+    {
+      "name": "reproductor",
+      "ticket": "eyJlc3QiOiI2ZjFjMmI0YS04ZDNlLTRmNWEtOWI3Yy0xZDJlM2Y0YTViNmMiLCJleHAiOjE3OTI2MTI4NjAsImp0aSI6Imp0aS1wbGF5ZXIiLCJyb2xlIjoicGxheWVyIn0.FnGTRr035OI1_tn7JYjwKI74FnKjbjG1mG3rmA_UEf8",
+      "now": 1792612830,
+      "establishment_id": "6f1c2b4a-8d3e-4f5a-9b7c-1d2e3f4a5b6c",
+      "role": "player",
+      "ticket_id": "jti-player"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "caducado",
+      "ticket": "eyJlc3QiOiI2ZjFjMmI0YS04ZDNlLTRmNWEtOWI3Yy0xZDJlM2Y0YTViNmMiLCJleHAiOjE3OTI2MTI4NjAsImp0aSI6Imp0aS1vd25lciIsInJvbGUiOiJvd25lciJ9.crJuKC5_zQ5L0DtsR6avnkUmMiOlioyX-W5RfJ4dyX8",
+      "now": 1792612860,
+      "reason": "expired"
+    },
+    {
+      "name": "contenido alterado",
+      "ticket": "eyJlc3QiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJleHAiOjE3OTI2MTI4NjAsImp0aSI6Imp0aS1vd25lciIsInJvbGUiOiJvd25lciJ9.crJuKC5_zQ5L0DtsR6avnkUmMiOlioyX-W5RfJ4dyX8",
+      "now": 1792612830,
+      "reason": "signature"
+    },
+    {
+      "name": "otro secreto",
+      "ticket": "eyJlc3QiOiI2ZjFjMmI0YS04ZDNlLTRmNWEtOWI3Yy0xZDJlM2Y0YTViNmMiLCJleHAiOjE3OTI2MTI4NjAsImp0aSI6Imp0aS1vd25lciIsInJvbGUiOiJvd25lciJ9.lHybCzQluZ4LX833mT01hy6AHXzHQNrrGQkHvGZOxpU",
+      "now": 1792612830,
+      "reason": "signature"
+    },
+    {
+      "name": "sin firma",
+      "ticket": "eyJlc3QiOiI2ZjFjMmI0YS04ZDNlLTRmNWEtOWI3Yy0xZDJlM2Y0YTViNmMiLCJleHAiOjE3OTI2MTI4NjAsImp0aSI6Imp0aS1vd25lciIsInJvbGUiOiJvd25lciJ9",
+      "now": 1792612830,
+      "reason": "signature"
+    },
+    {
+      "name": "firma truncada",
+      "ticket": "eyJlc3QiOiI2ZjFjMmI0YS04ZDNlLTRmNWEtOWI3Yy0xZDJlM2Y0YTViNmMiLCJleHAiOjE3OTI2MTI4NjAsImp0aSI6Imp0aS1vd25lciIsInJvbGUiOiJvd25lciJ9.crJuKC5_zQ5L0DtsR6avnkUmMiOlioyX-W5RfJ4dy",
+      "now": 1792612830,
+      "reason": "signature"
+    },
+    {
+      "name": "firma con caracteres no ASCII",
+      "ticket": "eyJlc3QiOiI2ZjFjMmI0YS04ZDNlLTRmNWEtOWI3Yy0xZDJlM2Y0YTViNmMiLCJleHAiOjE3OTI2MTI4NjAsImp0aSI6Imp0aS1vd25lciIsInJvbGUiOiJvd25lciJ9.firmañ",
+      "now": 1792612830,
+      "reason": "signature"
+    }
+  ]
+}

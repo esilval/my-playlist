@@ -71,6 +71,16 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      # Transporte de los eventos de la sesión de música (feature 002, plan D6).
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
       mailpit:
         image: axllent/mailpit:v1.31.6
         ports:
@@ -85,6 +95,7 @@ jobs:
       ENV: test
       MAILPIT_API_URL: http://localhost:8025
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/myplaylist
+      REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6

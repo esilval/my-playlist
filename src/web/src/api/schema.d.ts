@@ -191,6 +191,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/owner/music-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Music Session */
+        get: operations["get_music_session_api_owner_music_session_get"];
+        put?: never;
+        /** Open Music Session */
+        post: operations["open_music_session_api_owner_music_session_post"];
+        /** Close Music Session */
+        delete: operations["close_music_session_api_owner_music_session_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/owner/music-session/player": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Player */
+        post: operations["claim_player_api_owner_music_session_player_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/owner/music-session/player/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Report Player Event */
+        post: operations["report_player_event_api_owner_music_session_player_events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/owner/music-session/player/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Player Heartbeat */
+        post: operations["player_heartbeat_api_owner_music_session_player_heartbeat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/owner/realtime-ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Realtime Ticket */
+        post: operations["realtime_ticket_api_owner_realtime_ticket_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/public/data-policy": {
         parameters: {
             query?: never;
@@ -254,6 +341,13 @@ export interface components {
              */
             status: "check_email";
         };
+        /** ClaimOut */
+        ClaimOut: {
+            current: components["schemas"]["TrackOut"] | null;
+            /** Epoch */
+            epoch: number;
+            next: components["schemas"]["TrackOut"] | null;
+        };
         /** DataPolicyOut */
         DataPolicyOut: {
             /** Content */
@@ -281,10 +375,30 @@ export interface components {
             /** Phone */
             phone?: string | null;
         };
+        /** FailureOut */
+        FailureOut: {
+            /**
+             * Failed At
+             * Format: date-time
+             */
+            failed_at: string;
+            /** Title */
+            title: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HeartbeatIn */
+        HeartbeatIn: {
+            /** Epoch */
+            epoch: number;
+        };
+        /** HeartbeatOut */
+        HeartbeatOut: {
+            /** Version */
+            version: number;
         };
         /** LoginIn */
         LoginIn: {
@@ -298,6 +412,15 @@ export interface components {
              * @default
              */
             password: string;
+        };
+        /** MusicSessionOut */
+        MusicSessionOut: {
+            session?: components["schemas"]["SessionOut"] | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "closed";
         };
         /** OwnerMeOut */
         OwnerMeOut: {
@@ -333,6 +456,30 @@ export interface components {
              * @constant
              */
             status: "check_email";
+        };
+        /** PlayerEventIn */
+        PlayerEventIn: {
+            /** Epoch */
+            epoch: number;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "started" | "ended" | "failed";
+        };
+        /** ProgressOut */
+        ProgressOut: {
+            current: components["schemas"]["TrackOut"] | null;
+            next: components["schemas"]["TrackOut"] | null;
+            /** Version */
+            version: number;
         };
         /** PublicEstablishmentOut */
         PublicEstablishmentOut: {
@@ -379,6 +526,57 @@ export interface components {
              * @constant
              */
             status: "check_email";
+        };
+        /** SessionEnvelope */
+        SessionEnvelope: {
+            session: components["schemas"]["SessionOut"];
+        };
+        /** SessionOut */
+        SessionOut: {
+            /** Failures */
+            failures: components["schemas"]["FailureOut"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            now_playing: components["schemas"]["TrackOut"] | null;
+            /**
+             * Opened At
+             * Format: date-time
+             */
+            opened_at: string;
+            /** Player Active */
+            player_active: boolean;
+            /** Version */
+            version: number;
+        };
+        /** TicketIn */
+        TicketIn: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "owner" | "player";
+        };
+        /** TicketOut */
+        TicketOut: {
+            /** Expires In */
+            expires_in: number;
+            /** Ticket */
+            ticket: string;
+        };
+        /** TrackOut */
+        TrackOut: {
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Title */
+            title: string;
+            /** Track Ref */
+            track_ref: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -792,6 +990,277 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OwnerMeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_music_session_api_owner_music_session_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                mp_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MusicSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_music_session_api_owner_music_session_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                mp_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ya estaba abierta (R003) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionEnvelope"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionEnvelope"];
+                };
+            };
+            /** @description email_not_verified */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    close_music_session_api_owner_music_session_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                mp_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_player_api_owner_music_session_player_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                mp_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimOut"];
+                };
+            };
+            /** @description no_open_session */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    report_player_event_api_owner_music_session_player_events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                mp_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlayerEventIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgressOut"];
+                };
+            };
+            /** @description not_found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description player_superseded · no_open_session */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    player_heartbeat_api_owner_music_session_player_heartbeat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                mp_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HeartbeatIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeartbeatOut"];
+                };
+            };
+            /** @description player_superseded · no_open_session */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    realtime_ticket_api_owner_realtime_ticket_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                mp_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TicketIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketOut"];
                 };
             };
             /** @description Validation Error */
