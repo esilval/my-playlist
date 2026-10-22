@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-10-21         |
-| Estado | Approved · 577d7a9aaf95              |
+| Estado | Approved · 3e451b82df3a              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -108,7 +108,7 @@ La feature añade al monolito el módulo de sesión y cola (C2, `src/backend/app
   - **Puesta en marcha:** `POST …/player` incrementa `player_epoch` y devuelve la nueva época. Si había una canción en `playing`, devuelve esa misma, para empezarla desde el principio (R010). Si no, pasa la primera pendiente a `playing` (R004).
   - **Informes y latidos:** cada informe (D4) y cada latido llevan su época. Si no es la vigente, se responde `409 player_superseded`, y el reproductor se detiene e indica que la música sigue en otro dispositivo.
   - **Aviso inmediato:** la puesta en marcha publica `player.claimed {epoch}` por tiempo real. El reproductor anterior lo recibe en menos de 1 s y se detiene sin esperar a su siguiente informe.
-  - **Latido:** cada 15 s actualiza `player_seen_at` y devuelve la `version` de la sesión. Si el reproductor ve un salto de versión, pide el estado completo, así que un `queue.changed` perdido con el socket conectado se recupera en como mucho 15 s (R008). El panel considera activo un reproductor con un latido de hace menos de 45 s (R014). El latido también cuenta como actividad de la sesión iniciada (la caducidad de 12 h por inactividad de la feature 001).
+  - **Latido:** cada 15 s actualiza `player_seen_at` y devuelve la `version` de la sesión. Si el latido trae una versión mayor que la última que vio el reproductor, pide el estado completo. El latido no es un evento, así que una sola versión de más ya indica un evento que no llegó, y pedir el estado de más no hace daño. Así, un `queue.changed` perdido con el socket conectado se recupera en como mucho 15 s (R008). El panel considera activo un reproductor con un latido de hace menos de 45 s (R014). El latido también cuenta como actividad de la sesión iniciada (la caducidad de 12 h por inactividad de la feature 001).
 - **Alternativas descartadas:**
   - **Rechazar el segundo reproductor:** el usuario eligió que el último toma el control.
   - **Un bloqueo con caducidad en Redis:** el estado del reproductor quedaría solo en Redis (S10).
@@ -144,7 +144,7 @@ La feature añade al monolito el módulo de sesión y cola (C2, `src/backend/app
     - Precargar es cargar de verdad: la instancia libre carga la siguiente en silencio con `loadVideoById`, la pausa en cuanto empieza y vuelve al principio. `cueVideoById` no sirve, porque no pide el video hasta reproducirlo.
     - El adaptador es el único que traduce `track_ref` a un video de YouTube. La referencia tiene la forma `yt:<id del video>`, con un id de 11 caracteres; cualquier otra da `error` con el motivo `invalid_track_ref`.
   - **Fallo:** una canción se da por fallida si el proveedor emite `error` (en YouTube, video retirado, privado o que no se puede insertar) o si no empieza a sonar en 10 s desde que le toca. Entonces el reproductor informa `failed` y empieza la siguiente (R007).
-  - **Proveedor falso:** existe un `FakePlaybackProvider` que simula la duración y los fallos que indica su referencia (por ejemplo, `fake:3s` o `fake:error`). Se activa con `VITE_PLAYBACK_PROVIDER=fake` en desarrollo y pruebas, y el build de producción lo excluye. Así las pruebas e2e no dependen de YouTube ni de su publicidad.
+  - **Proveedor falso:** existe un `FakePlaybackProvider` que simula la duración y los fallos que indica su referencia (por ejemplo, `fake:3s` o `fake:error`). Se activa con `VITE_PLAYBACK_PROVIDER=fake` en desarrollo y pruebas, y el build de producción lo excluye. Así las pruebas e2e no dependen de YouTube ni de su publicidad. El servidor de desarrollo del compose lo usa por defecto, porque `devtools enqueue` (D9) agrega referencias `fake:…`; para probar con YouTube real se arranca con `VITE_PLAYBACK_PROVIDER=youtube`.
   - **Prueba manual:** el comportamiento con YouTube real (precarga, videos que no se pueden insertar, publicidad) se prueba a mano y se documenta en `docs/qa/reproductor-youtube.md`.
 - **Alternativas descartadas:**
   - **Un solo IFrame y `loadVideoById` al terminar:** el hueco de carga, de 1 a 3 s según la red, deja muy poco margen para Q5.
@@ -183,7 +183,10 @@ La feature añade al monolito el módulo de sesión y cola (C2, `src/backend/app
 - **Alternativas descartadas:**
   - **Avisos de fallo solo por tiempo real:** se pierden si el panel no estaba abierto.
   - **Una pantalla aparte para la sesión:** B05 añadirá la cola a este mismo panel.
-- **Consecuencias:** el panel abre una conexión de tiempo real. Si no puede conectar, la tarjeta sigue funcionando con la API y se actualiza al recargar.
+- **Consecuencias:**
+  - El panel abre una conexión de tiempo real, también con la sesión cerrada, para enterarse de que se abre en otro equipo. Si no puede conectar, la tarjeta sigue funcionando con la API y se actualiza al recargar.
+  - Ningún evento avisa de que el reproductor dejó de estar activo: el panel lo ve al cargar, al resincronizar o al cambiar la cola. Un reproductor que se cierra sigue apareciendo como activo hasta entonces (R014). Si hace falta antes, se añadirá un evento o una consulta periódica.
+  - Cerrar la sesión no pide confirmación, porque la spec no la pide. Cuando B05 muestre la cola en el panel, conviene un requisito que la pida, porque cerrar descarta las pendientes (R011).
 
 ### D8 — Ruta del reproductor y puesta en marcha
 
@@ -237,7 +240,10 @@ La feature añade al monolito el módulo de sesión y cola (C2, `src/backend/app
   - **Redirigir a `/entrar` al recibir el `401`, como el resto del panel:** corta la canción a la mitad y pierde los informes que solo estaban en memoria.
   - **Que el reproductor tenga su propia credencial, que no se revoque al restablecer la contraseña:** contradice la revocación de todas las sesiones al restablecer la contraseña (feature 001), y una credencial robada seguiría controlando el reproductor.
   - **Guardar los informes en `localStorage`:** se compartirían entre pestañas, y una pestaña con otro reproductor podría entregarlos con una época que no es la suya.
-- **Consecuencias:** si el propietario cierra la pestaña antes de volver a entrar, se pierden los informes guardados. Al poner en marcha un reproductor nuevo, la canción que sonaba vuelve a empezar desde el principio, como en R010. Se acepta: es el mismo caso que abrir otro reproductor.
+- **Consecuencias:**
+  - Si el propietario cierra la pestaña antes de volver a entrar, se pierden los informes guardados. Al poner en marcha un reproductor nuevo, la canción que sonaba vuelve a empezar desde el principio, como en R010. Se acepta: es el mismo caso que abrir otro reproductor.
+  - Si el `ended` de una canción ya está en camino cuando llega el `401` de un latido, C2 lo aplica y pasa la siguiente a `playing`, aunque el reproductor ya no la empieza. El panel la mostrará como la que suena hasta que se vuelva a poner en marcha el reproductor. Al hacerlo, el informe se reenvía sin efecto (es idempotente) y la puesta en marcha devuelve esa canción desde el principio, así que R015 se cumple. Se acepta por ser una ventana de un viaje de ida y vuelta.
+  - Al abrir el reproductor sin sesión iniciada, antes de ponerlo en marcha, se lleva a `/entrar` como en el resto del panel (D8). El cliente sin redirección solo cambia lo que pasa una vez en marcha.
 
 ## Componentes afectados
 
@@ -500,3 +506,11 @@ La tercera enmienda del 2026-10-21 cubre lo que salió al implementar la web (T0
 - **D10:** las dependencias de desarrollo de lint de C6.
 
 No introduce requisitos: el avance en espera es la forma de cumplir R008.
+
+La cuarta enmienda del 2026-10-21 recoge lo que salió al implementar T016–T018 y T020:
+- **D3:** cualquier versión mayor en el latido hace pedir el estado. Antes solo lo hacía un salto de más de una, y así un único `queue.changed` perdido no se recuperaba.
+- **D5:** el servidor de desarrollo usa el proveedor falso por defecto.
+- **D7:** la tarjeta escucha la sala también con la sesión cerrada. Quedan anotados el hueco del reproductor inactivo y la confirmación al cerrar.
+- **D11:** la carrera entre un `ended` en camino y el `401`, y la redirección al abrir sin sesión iniciada.
+
+No cambia ninguna decisión ni introduce requisitos.
