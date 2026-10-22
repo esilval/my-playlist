@@ -227,6 +227,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/owner/music-session/player/advance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Advance Player
+         * @description El reproductor en espera pide empezar la canción que entró (R008, D4).
+         */
+        post: operations["advance_player_api_owner_music_session_player_advance_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/owner/music-session/player/events": {
         parameters: {
             query?: never;
@@ -322,6 +342,11 @@ export interface components {
             email: string;
             /** Email Verified */
             email_verified: boolean;
+        };
+        /** AdvanceIn */
+        AdvanceIn: {
+            /** Epoch */
+            epoch: number;
         };
         /** AuthenticatedOut */
         AuthenticatedOut: {
@@ -1131,6 +1156,48 @@ export interface operations {
                 };
             };
             /** @description no_open_session */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    advance_player_api_owner_music_session_player_advance_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                mp_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdvanceIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgressOut"];
+                };
+            };
+            /** @description player_superseded · no_open_session */
             409: {
                 headers: {
                     [name: string]: unknown;

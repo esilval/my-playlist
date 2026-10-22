@@ -205,6 +205,15 @@ class MusicSession:
                 self._changed(SessionEventType.TRACK_FAILED, item_id=str(item.id), title=item.title)
         return Progress(current=_track(self.current), next=self._next(), version=self.version)
 
+    def advance(self, epoch: int) -> Progress:
+        """Avanza en espera (R008, plan D4): si no suena ninguna canción, empieza la
+        primera pendiente. Si ya suena una, o no hay pendientes, no cambia nada y
+        devuelve el estado actual, así que repetirlo no tiene efecto."""
+        self._require_player(epoch)
+        if self.current is None and self._play_next() is not None:
+            self._changed(SessionEventType.QUEUE_CHANGED)
+        return Progress(current=_track(self.current), next=self._next(), version=self.version)
+
     def _require_open(self) -> None:
         if not self.is_open:
             raise NoOpenSession

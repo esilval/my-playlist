@@ -23,9 +23,12 @@ export function fakeApi(handlers: Record<string, Handler>) {
   const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
     const request = input as Request;
     const path = new URL(request.url).pathname;
+    // Se anota en el orden en que se hicieron las peticiones, antes de leer el cuerpo.
+    const entry: SentRequest = { method: request.method, path, body: undefined };
+    sent.push(entry);
     const text = await request.text();
     const body: unknown = text ? JSON.parse(text) : undefined;
-    sent.push({ method: request.method, path, body });
+    entry.body = body;
     const handler = handlers[`${request.method} ${path}`];
     const response = typeof handler === "function" ? handler(body) : handler;
     if (!response) {
@@ -44,5 +47,5 @@ export function fakeApi(handlers: Record<string, Handler>) {
     });
   });
   const client: ApiClient = createApiClient({ fetch, navigate });
-  return { client, sent, navigate };
+  return { client, sent, navigate, fetch };
 }

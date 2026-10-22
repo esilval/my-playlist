@@ -12,5 +12,6 @@ export const routes: RouteObject[] = [
   { path: "/politica-de-datos", lazy: () => import("./routes/data-policy") },
   { path: "/panel", lazy: () => import("./routes/panel") },
   { path: "/panel/qr/imprimir", lazy: () => import("./routes/print-qr") },
+  { path: "/panel/reproductor", lazy: () => import("./routes/player") },
   { path: "/l/:code", lazy: () => import("./routes/public-establishment") },
 ];

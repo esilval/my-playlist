@@ -166,3 +166,71 @@ def test_F002_R008_enqueue_con_la_sesion_cerrada_lanza_no_open_session() -> None
     with pytest.raises(ValueError):
         _open().enqueue(item_id=uuid4(), track_ref="fake:B", title="  ")
     assert len(session.items) == 1
+
+
+def test_F002_R008_avanzar_en_espera_empieza_la_primera_pendiente() -> None:
+    session = _open()
+    claim = session.claim_player(NOW)
+    assert claim.current is None
+    session.enqueue(item_id=uuid4(), track_ref="fake:A", title="A")
+    session.enqueue(item_id=uuid4(), track_ref="fake:B", title="B")
+    session.events.clear()
+    version = session.version
+
+    progress = session.advance(claim.epoch)
+
+    assert progress.current is not None and progress.current.title == "A"
+    assert progress.next is not None and progress.next.title == "B"
+    assert [item.state for item in session.items] == [
+        QueueItemState.PLAYING,
+        QueueItemState.PENDING,
+    ]
+    assert progress.version == session.version == version + 1
+    assert [event.type for event in session.events] == [SessionEventType.QUEUE_CHANGED]
+
+
+def test_F002_R008_avanzar_con_una_cancion_sonando_no_cambia_nada() -> None:
+    session = _open("A", "B")
+    claim = session.claim_player(NOW)
+    session.events.clear()
+    version = session.version
+
+    # Repetido: la que suena sigue sonando y no se publica nada.
+    for _ in range(2):
+        progress = session.advance(claim.epoch)
+        assert progress.current is not None and progress.current.title == "A"
+        assert progress.next is not None and progress.next.title == "B"
+    assert [item.state for item in session.items] == [
+        QueueItemState.PLAYING,
+        QueueItemState.PENDING,
+    ]
+    assert (session.version, session.events) == (version, [])
+
+    # Sin pendientes, tampoco cambia nada.
+    empty = _open()
+    epoch = empty.claim_player(NOW).epoch
+    empty.events.clear()
+    before = empty.version
+    progress = empty.advance(epoch)
+    assert (progress.current, progress.next, progress.version) == (None, None, before)
+    assert empty.events == []
+
+
+def test_F002_R010_avanzar_con_epoca_vieja_lanza_player_superseded() -> None:
+    session = _open()
+    first = session.claim_player(NOW)
+    session.claim_player(NOW)
+    session.enqueue(item_id=uuid4(), track_ref="fake:A", title="A")
+
+    with pytest.raises(PlayerSuperseded):
+        session.advance(first.epoch)
+    assert [item.state for item in session.items] == [QueueItemState.PENDING]
+
+
+def test_F002_R011_avanzar_con_la_sesion_cerrada_lanza_no_open_session() -> None:
+    session = _open("A")
+    epoch = session.claim_player(NOW).epoch
+    session.close(NOW)
+
+    with pytest.raises(NoOpenSession):
+        session.advance(epoch)

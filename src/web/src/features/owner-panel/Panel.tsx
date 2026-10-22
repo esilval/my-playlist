@@ -1,5 +1,7 @@
-// Panel del propietario (R008, R010, R011, R014, R018, R019, R020).
+// Panel del propietario (R008, R010, R011, R014, R018, R019, R020; feature 002: R001,
+// R002, R007, R011, R014 en la tarjeta de sesión de música).
 import { CONNECTION_ERROR } from "../../api/errors";
+import { MusicSessionCard } from "../music-session/MusicSessionCard";
 import { EstablishmentForm } from "./EstablishmentForm";
 import { LogoutButton } from "./LogoutButton";
 import { QrCard } from "./QrCard";
@@ -39,6 +41,7 @@ export function Panel() {
           setState({ status: "ready", me: { ...me, establishment } })
         }
       />
+      <MusicSessionCard />
       <QrCard
         emailVerified={me.account.email_verified}
         publicUrl={me.establishment.public_url}

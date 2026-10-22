@@ -366,6 +366,17 @@ async def test_F002_R013_reproductor_de_a_no_reclama_ni_informa_en_b(ctx: Ctx) -
     assert (beat.status_code, beat.json()) == (409, {"error": "player_superseded"})
     _assert_nothing_of_b_music(ctx, beat, b)
 
+    # Avanzar, con la época de A o la de B, solo mira la sesión de A, que está vacía.
+    for epoch, status in ((1, 200), (2, 409)):
+        advanced = await ctx.a.post(
+            f"/api/owner/music-session/player/advance?establishment_id={b_id}",
+            json={"epoch": epoch, "establishment_id": b_id},
+        )
+        assert advanced.status_code == status, advanced.text
+        if status == 200:
+            assert (advanced.json()["current"], advanced.json()["next"]) == (None, None)
+        _assert_nothing_of_b_music(ctx, advanced, b)
+
     assert await _b_music(ctx) == b_before
 
 
