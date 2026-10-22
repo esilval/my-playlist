@@ -16,6 +16,7 @@ const EXPECTED_PATHS = [
   "/politica-de-datos",
   "/panel",
   "/panel/qr/imprimir",
+  "/panel/reproductor",
   "/l/:code",
 ];
 

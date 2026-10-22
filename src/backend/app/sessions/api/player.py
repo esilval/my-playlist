@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.accounts.api.deps import CurrentOwner
 from app.sessions.api.music_session import TrackOut
+from app.sessions.application.advance_player import AdvancePlayer
 from app.sessions.application.claim_player import ClaimPlayer
 from app.sessions.application.heartbeat import PlayerHeartbeat
 from app.sessions.application.report_player_event import ReportPlayerEvent
@@ -74,6 +75,11 @@ def _claim(request: Request) -> ClaimPlayer:
 
 def _report(request: Request) -> ReportPlayerEvent:
     use_case: ReportPlayerEvent = request.app.state.report_player_event
+    return use_case
+
+
+def _advance(request: Request) -> AdvancePlayer:
+    use_case: AdvancePlayer = request.app.state.advance_player
     return use_case
 
 
@@ -142,6 +148,34 @@ async def report_player_event(
         return JSONResponse(status_code=409, content=PLAYER_SUPERSEDED)
     except QueueItemNotFound:
         return JSONResponse(status_code=404, content=NOT_FOUND)
+    return ProgressOut(
+        current=track_out(progress.current),
+        next=track_out(progress.next),
+        version=progress.version,
+    )
+
+
+class AdvanceIn(BaseModel):
+    epoch: int
+
+
+@router.post(
+    "/advance",
+    response_model=ProgressOut,
+    responses={409: {"description": "player_superseded · no_open_session"}},
+)
+async def advance_player(
+    owner: CurrentOwner,
+    body: AdvanceIn,
+    advance: Annotated[AdvancePlayer, Depends(_advance)],
+) -> ProgressOut | JSONResponse:
+    """El reproductor en espera pide empezar la canción que entró (R008, D4)."""
+    try:
+        progress = await advance(owner, body.epoch)
+    except NoOpenSession:
+        return JSONResponse(status_code=409, content=NO_OPEN_SESSION)
+    except PlayerSuperseded:
+        return JSONResponse(status_code=409, content=PLAYER_SUPERSEDED)
     return ProgressOut(
         current=track_out(progress.current),
         next=track_out(progress.next),

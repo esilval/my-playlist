@@ -25,6 +25,7 @@ SESSION_URL = "/api/owner/music-session"
 PLAYER_URL = f"{SESSION_URL}/player"
 HEARTBEAT_URL = f"{PLAYER_URL}/heartbeat"
 EVENTS_URL = f"{PLAYER_URL}/events"
+ADVANCE_URL = f"{PLAYER_URL}/advance"
 
 
 @dataclass
@@ -370,3 +371,73 @@ async def test_F002_R013_informe_de_una_cancion_ajena_da_404(ctx: Ctx) -> None:
 
     assert (response.status_code, response.json()) == (404, {"error": "not_found"})
     assert await _queue_states(ctx) == [("A", "playing")]
+
+
+async def test_F002_R008_avanzar_en_espera_empieza_la_que_entro_y_publica_queue_changed(
+    ctx: Ctx,
+) -> None:
+    await _open(ctx)
+    claim = (await ctx.client.post(PLAYER_URL)).json()
+    assert claim["current"] is None
+    # Entra una canción con el reproductor en espera: se queda pendiente.
+    await _enqueue(ctx, "A")
+    assert await _queue_states(ctx) == [("A", "pending")]
+    [establishment] = await _sql(ctx, "SELECT id FROM establishment")
+
+    redis = Redis.from_url(ctx.redis_url)
+    try:
+        async with redis.pubsub() as pubsub:
+            await pubsub.subscribe(f"est:{establishment['id']}")
+            response = await ctx.client.post(ADVANCE_URL, json={"epoch": claim["epoch"]})
+            async with asyncio.timeout(2):
+                message = None
+                while message is None:
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1)
+    finally:
+        await redis.aclose()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["current"]["title"], body["next"]) == ("A", None)
+    assert await _queue_states(ctx) == [("A", "playing")]
+    event = json.loads(message["data"])
+    assert (event["type"], event["version"]) == ("queue.changed", body["version"])
+
+    # Pedirlo otra vez no cambia nada: A sigue sonando y la versión no crece.
+    again = await ctx.client.post(ADVANCE_URL, json={"epoch": claim["epoch"]})
+    assert again.json() == body
+    assert await _queue_states(ctx) == [("A", "playing")]
+
+
+async def test_F002_R010_avanzar_con_epoca_vieja_da_409_player_superseded(ctx: Ctx) -> None:
+    await _open(ctx)
+    first = (await ctx.client.post(PLAYER_URL)).json()
+    await ctx.client.post(PLAYER_URL)
+    await _enqueue(ctx, "A")
+
+    response = await ctx.client.post(ADVANCE_URL, json={"epoch": first["epoch"]})
+
+    assert (response.status_code, response.json()) == (409, {"error": "player_superseded"})
+    assert await _queue_states(ctx) == [("A", "pending")]
+
+
+async def test_F002_R011_avanzar_con_la_sesion_cerrada_da_409_no_open_session(ctx: Ctx) -> None:
+    await _open(ctx)
+    claim = (await ctx.client.post(PLAYER_URL)).json()
+    assert (await ctx.client.delete(SESSION_URL)).status_code == 204
+
+    response = await ctx.client.post(ADVANCE_URL, json={"epoch": claim["epoch"]})
+
+    assert (response.status_code, response.json()) == (409, {"error": "no_open_session"})
+
+
+async def test_F002_R013_avanzar_sin_sesion_iniciada_da_401(ctx: Ctx) -> None:
+    await _open(ctx)
+    claim = (await ctx.client.post(PLAYER_URL)).json()
+    await _enqueue(ctx, "A")
+    ctx.client.cookies.clear()
+
+    response = await ctx.client.post(ADVANCE_URL, json={"epoch": claim["epoch"]})
+
+    assert response.status_code == 401
+    assert await _queue_states(ctx) == [("A", "pending")]

@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-10-21         |
-| Estado | Approved · f3c894add322              |
+| Estado | Approved · 577d7a9aaf95              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -121,21 +121,28 @@ La feature añade al monolito el módulo de sesión y cola (C2, `src/backend/app
 - **Decisión:**
   - **Informes:** el reproductor manda `POST …/player/events` con `{epoch, item_id, type}`, donde `type` es `started`, `ended` o `failed` (con motivo). C2 aplica la transición en la transacción bloqueada (D2) y responde con la canción actual y la siguiente pendiente. `ended` y `failed` pasan la siguiente pendiente a `playing`.
   - **Idempotencia:** un informe sobre una canción que ya no está en `playing` (un reenvío tras un corte) no cambia nada y devuelve el estado actual. Así, el reproductor puede reintentar sus informes sin repetir canciones.
+  - **Avanzar en espera:** una canción que entra con la cola vacía se queda pendiente: nada la pasa a `playing`. El reproductor en espera pide `POST …/player/advance` con su época cuando recibe `queue.changed` o un estado completo (D6) (R008).
+    - Si no suena ninguna, C2 pasa la primera pendiente a `playing`, incrementa la versión, publica `queue.changed` y responde con la actual y la siguiente.
+    - Si ya suena una, o no hay pendientes, no cambia nada y devuelve el estado actual, así que repetirlo no tiene efecto.
+    - Con una época vieja responde `409 player_superseded`, como los informes: el reproductor en espera no le quita el control a otro (R010).
   - **Sin conexión:** el reproductor guarda los informes que no pudo entregar, con su época, en el almacenamiento de la pestaña (`sessionStorage`). Los reenvía en orden al recuperar la conexión. Mientras tanto no empieza canciones nuevas: al terminar la actual, espera (R012). Los mismos informes guardados sirven tras volver a iniciar sesión (D11).
   - **Errores:** con la sesión cerrada se responde `409 no_open_session` y el reproductor se detiene (R011). Con una época vieja, `409 player_superseded` (D3).
 - **Alternativas descartadas:**
   - **El reproductor avanza solo con una copia local de la cola:** dos reproductores o un corte desordenarían la cola, y C2 dejaría de ser la única que la modifica (S2).
   - **El reproductor sigue sonando las canciones precargadas durante un corte:** podría tocar canciones que se descartaron o cambiaron mientras tanto, contra R011 y R012.
+  - **En espera, volver a poner en marcha el reproductor (`POST …/player`):** no pide cambios en el servidor. Pero incrementa la época con cada canción que entra, y un reproductor que perdió el `player.claimed` de otro le quitaría el control, contra R010.
+  - **Que encolar empiece la canción si no suena ninguna:** cambia la regla de encolar, y la canción quedaría en `playing` aunque el reproductor ya no esté, mientras no se vuelva a poner en marcha uno.
 - **Consecuencias:** cada cambio de canción pide una petición a la API, dentro del presupuesto de 3 s de Q5. La siguiente canción se precarga mientras suena la actual (D5), así que la respuesta del servidor solo confirma cuál toca.
 
 ### D5 — Reproductor con adaptador de proveedor, precarga y detección de fallos
 
 - **Contexto:** la reproducción usa el IFrame Player API de YouTube detrás de un adaptador (ADR-0010). El hueco entre canciones es de menos de 3 s (R005, Q5). Una canción que no se puede reproducir se salta (R007).
 - **Decisión:**
-  - **Interfaz:** `PlaybackProvider` en `src/web/src/features/player/provider/`, con `load(trackRef)`, `play()`, `stop()` y los eventos `playing`, `ended` y `error`. El reproductor (C4) solo habla con esa interfaz.
+  - **Interfaz:** `PlaybackProvider` en `src/web/src/features/player/provider/`, con `load(trackRef)` para precargar, `play(trackRef)`, `stop()` y `destroy()`. Avisa por las funciones `onPlaying(trackRef)`, `onEnded(trackRef)` y `onError(trackRef, reason)`, que recibe al crearse. Cada aviso lleva la referencia, para que el reproductor descarte uno que llegue tarde de una canción anterior. `onPlaying` puede llegar más de una vez por canción (tras una pausa o publicidad). El reproductor (C4) solo habla con esa interfaz.
   - **Adaptador de YouTube:**
     - Usa dos instancias del IFrame Player que se alternan: mientras suena una, la otra tiene cargada la siguiente, y al terminar la actual empieza la otra al instante.
-    - El adaptador es el único que traduce `track_ref` a un video de YouTube.
+    - Precargar es cargar de verdad: la instancia libre carga la siguiente en silencio con `loadVideoById`, la pausa en cuanto empieza y vuelve al principio. `cueVideoById` no sirve, porque no pide el video hasta reproducirlo.
+    - El adaptador es el único que traduce `track_ref` a un video de YouTube. La referencia tiene la forma `yt:<id del video>`, con un id de 11 caracteres; cualquier otra da `error` con el motivo `invalid_track_ref`.
   - **Fallo:** una canción se da por fallida si el proveedor emite `error` (en YouTube, video retirado, privado o que no se puede insertar) o si no empieza a sonar en 10 s desde que le toca. Entonces el reproductor informa `failed` y empieza la siguiente (R007).
   - **Proveedor falso:** existe un `FakePlaybackProvider` que simula la duración y los fallos que indica su referencia (por ejemplo, `fake:3s` o `fake:error`). Se activa con `VITE_PLAYBACK_PROVIDER=fake` en desarrollo y pruebas, y el build de producción lo excluye. Así las pruebas e2e no dependen de YouTube ni de su publicidad.
   - **Prueba manual:** el comportamiento con YouTube real (precarga, videos que no se pueden insertar, publicidad) se prueba a mano y se documenta en `docs/qa/reproductor-youtube.md`.
@@ -154,7 +161,7 @@ La feature añade al monolito el módulo de sesión y cola (C2, `src/backend/app
   - **Publicación:** C2 publica por el puerto `EventPublisher`, cuyo adaptador es `RedisEventPublisher`, después de confirmar la transacción (`application/publishing.py`).
     - Va por el mejor esfuerzo: si Redis no responde, el cambio ya está guardado, el fallo queda en el log y la petición no falla.
     - El cliente de Redis espera como mucho 1 s, al conectar y al publicar, para que una petición no se cuelgue después del commit.
-  - **Eventos:** `session.opened`, `session.closed`, `player.claimed`, `track.started`, `track.failed` y `queue.changed`. Cada uno lleva `session_id` y la `version` de la sesión. `queue.changed` se emite cuando la cola cambia sin otro evento más concreto: al entrar una canción y al terminar la que sonaba (`ended`), porque cada cambio incrementa la versión (D2).
+  - **Eventos:** `session.opened`, `session.closed`, `player.claimed`, `track.started`, `track.failed` y `queue.changed`. Cada uno lleva `session_id` y la `version` de la sesión. `queue.changed` se emite cuando la cola cambia sin otro evento más concreto: al entrar una canción, al terminar la que sonaba (`ended`) y al avanzar en espera (D4), porque cada cambio incrementa la versión (D2).
   - **Resincronización:** si un cliente ve un salto de versión, o se reconecta, pide el estado completo a la API (`GET /api/owner/music-session`).
 - **Alternativas descartadas:**
   - **Bandeja de salida transaccional para los eventos:** garantiza la entrega, pero con resincronización por versión un evento perdido solo retrasa la pantalla. Se puede añadir si falla en la práctica.
@@ -209,7 +216,7 @@ La feature añade al monolito el módulo de sesión y cola (C2, `src/backend/app
 - **Contexto:** la constitución exige justificar cada dependencia nueva.
 - **Decisión:**
   - **Backend:** `redis` (redis-py, cliente asíncrono), para publicar los eventos.
-  - **C6:** `socket.io`, y `redis` (node-redis) para la suscripción. En desarrollo: `typescript`, `vitest`, `eslint` y `socket.io-client` para las pruebas.
+  - **C6:** `socket.io`, y `redis` (node-redis) para la suscripción. En desarrollo, las mismas herramientas que la web: `typescript`, `@types/node`, `vitest`, `eslint` con `@eslint/js`, `typescript-eslint` y `globals`, y `socket.io-client` para las pruebas.
   - **Web:** `socket.io-client`, y la API del IFrame de YouTube cargada desde su script oficial.
 - **Alternativas descartadas:**
   - **`ioredis`:** funciona igual, pero node-redis es el cliente oficial.
@@ -237,7 +244,7 @@ La feature añade al monolito el módulo de sesión y cola (C2, `src/backend/app
 | Componente | Cambio | Requisitos que cubre |
 | ---------- | ------ | -------------------- |
 | `src/backend/app/sessions/domain/` | Máquina de estados de la cola y reglas de la sesión: una abierta, transiciones (incluida la de la canción que suena al cerrar), épocas y reproductor activo; puertos `EventPublisher` y `Clock` | R003, R005, R006, R007, R010, R011, R012 |
-| `src/backend/app/sessions/application/` | Casos de uso: abrir, cerrar y consultar la sesión; poner en marcha el reproductor; informar de eventos; latido; `EnqueueTrack` | R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R014 |
+| `src/backend/app/sessions/application/` | Casos de uso: abrir, cerrar y consultar la sesión; poner en marcha el reproductor; informar de eventos; avanzar en espera; latido; `EnqueueTrack` | R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R014 |
 | `src/backend/app/sessions/infrastructure/` | Repositorio SQLAlchemy con bloqueo de la sesión; `RedisEventPublisher` (con tiempo de espera de 1 s) y publicador en memoria para las pruebas | R003, R006, R008, R011, R014 |
 | `src/backend/app/shared/realtime_ticket.py` | Emisión y verificación del ticket de tiempo real (ADR-0014); `REALTIME_TICKET_SECRET` en `config.py` | R013, R014 |
 | `src/backend/app/sessions/api/` | Rutas `/api/owner/music-session/*` y `/api/owner/realtime-ticket` | R001, R002, R003, R004, R009, R010, R011, R013, R014 |
@@ -270,6 +277,7 @@ Todos los cuerpos van en JSON. Las rutas piden la sesión iniciada del propietar
 | `GET /api/owner/music-session` | — | `200 {status: "open", session: {id, opened_at, version, now_playing: Track \| null, player_active: bool, failures: [{title, failed_at}]}}` · `200 {status: "closed", session: null}` · `401` |
 | `POST /api/owner/music-session/player` | — | `200 {epoch, current?: Track, next?: Track}` (R004, R010) · `409 no_open_session` (R009) · `401` |
 | `POST /api/owner/music-session/player/events` | `{epoch, item_id, type: "started" \| "ended" \| "failed", reason?}`, con `reason` de como mucho 100 caracteres | `200 {current?: Track, next?: Track, version}` (idempotente, D4) · `404 not_found` si la canción no es de la sesión abierta, con el mismo cuerpo exista o no en otro establecimiento (R013) · `409 player_superseded` · `409 no_open_session` · `401` · `422` |
+| `POST /api/owner/music-session/player/advance` | `{epoch}` | `200 {current?: Track, next?: Track, version}`: si no sonaba ninguna, la primera pendiente pasa a sonar; si no, el estado actual (D4, R008) · `409 player_superseded` · `409 no_open_session` · `401` · `422` |
 | `POST /api/owner/music-session/player/heartbeat` | `{epoch}` | `200 {version}` (D3) · `409 player_superseded` · `409 no_open_session` · `401` (D11) |
 | `POST /api/owner/realtime-ticket` | `{role: "owner" \| "player"}` | `200 {ticket, expires_in: 60}` con `Cache-Control: no-store` (ADR-0014) · `401` · `422` |
 
@@ -284,7 +292,7 @@ Todos los cuerpos van en JSON. Las rutas piden la sesión iniciada del propietar
 | `player.claimed` | `epoch` | reproductor anterior (se detiene, R010), panel |
 | `track.started` | `item_id`, `title` | panel (R014) |
 | `track.failed` | `item_id`, `title` | panel (R007) |
-| `queue.changed` | — | reproductor en espera (R008); también se emite al terminar una canción (D6) |
+| `queue.changed` | — | reproductor en espera, que pide avanzar (R008, D4); también se emite al terminar una canción y al avanzar en espera (D6) |
 
 **Formato del ticket de tiempo real** (ADR-0014): `base64url(JSON {est, role, exp, jti})` + `.` + `base64url(HMAC-SHA256(secreto, segmento))`. La firma va sobre el segmento tal como viaja, así que C6 lo valida sin reproducir el JSON. Los vectores que comparten el monolito y C6 están en `src/realtime/test/fixtures/ticket-vectors.json`.
 
@@ -318,6 +326,12 @@ sequenceDiagram
   C2-)C6: track.failed B (ADR-0005)
   C2-->>C4: current = C
   C6-)C7: aviso de fallo de B (ADR-0005)
+  C4->>C2: events ended C (D4)
+  C2-->>C4: current = null: en espera
+  C2-)C6: queue.changed al entrar D (ADR-0005)
+  C6-)C4: queue.changed (ADR-0005)
+  C4->>C2: advance (D4)
+  C2-->>C4: current = D
   U->>C7: cerrar sesión de música
   C7->>C2: DELETE music-session (D2, D7)
   C2-)C6: session.closed (ADR-0005)
@@ -364,6 +378,7 @@ classDiagram
     +claim_player() PlayerClaim
     +heartbeat(epoch) version
     +apply(PlayerEvent) Progress
+    +advance(epoch) Progress
   }
   class QueueItem {
     +state
@@ -400,8 +415,15 @@ classDiagram
   class PlaybackProvider {
     <<interfaz>>
     +load(trackRef)
-    +play()
+    +play(trackRef)
     +stop()
+    +destroy()
+  }
+  class PlaybackEvents {
+    <<interfaz>>
+    +onPlaying(trackRef)
+    +onEnded(trackRef)
+    +onError(trackRef, reason)
   }
   class YouTubePlaybackProvider
   class FakePlaybackProvider
@@ -413,6 +435,7 @@ classDiagram
   YouTubePlaybackProvider ..|> PlaybackProvider
   FakePlaybackProvider ..|> PlaybackProvider
   PlayerController --> PlaybackProvider
+  PlaybackProvider --> PlaybackEvents
 ```
 
 ## Estrategia de pruebas
@@ -426,7 +449,7 @@ classDiagram
 | R005 | unitaria (orden de la cola), integración (`ended` devuelve la siguiente) y e2e (A, B y C suenan en orden con huecos de menos de 3 s, con el proveedor falso) | `test_queue_state.py`, `test_player.py`, `src/web/e2e/player.spec.ts` |
 | R006 | unitaria (una canción terminada o saltada no vuelve a `playing`) e integración (al poner en marcha de nuevo, suena C, no A ni B) | `test_queue_state.py`, `test_player.py` |
 | R007 | integración (`failed` salta y publica `track.failed`; después, `GET music-session` devuelve el fallo, D7), componente (el reproductor da por fallida una canción a los 10 s sin sonar) y e2e (fallo con el proveedor falso, siguiente en menos de 3 s y aviso en el panel) | `test_player.py`, `Player.test.tsx`, `player.spec.ts` |
-| R008 | integración (`EnqueueTrack` publica `queue.changed`; el latido devuelve la versión nueva), componente (en espera, sin sonido; un salto de versión en el latido hace pedir el estado) y e2e (en espera, entra una canción con la herramienta de desarrollo y suena en menos de 3 s) | `test_player.py`, `Player.test.tsx`, `player.spec.ts` |
+| R008 | unitaria (avanzar en espera pasa la primera pendiente a sonar; con una sonando no cambia nada), integración (`EnqueueTrack` publica `queue.changed`; el latido devuelve la versión nueva; avanzar en espera empieza la que entró y publica `queue.changed`), componente (en espera, sin sonido; al llegar `queue.changed` pide avanzar; un salto de versión en el latido hace pedir el estado) y e2e (en espera, entra una canción con la herramienta de desarrollo y suena en menos de 3 s) | `test_player.py`, `Player.test.tsx`, `player.spec.ts` |
 | R009 | integración (`409 no_open_session`) y componente (indica que no hay sesión abierta) | `test_player.py`, `Player.test.tsx` |
 | R010 | integración (la segunda puesta en marcha deja a la primera con `409 player_superseded` y devuelve la canción actual) y e2e (dos contextos de navegador: el primero se detiene en menos de 3 s y lo indica) | `test_player.py`, `player.spec.ts` |
 | R011 | integración (cerrar descarta las pendientes, deja la que sonaba en `played`, conserva las que sonaron y publica `session.closed`) y e2e (la música se detiene en menos de 3 s; cierre durante un corte del reproductor) | `test_music_session.py`, `player.spec.ts` |
@@ -470,3 +493,10 @@ La segunda enmienda del 2026-10-21 alinea el plan con la implementación del bac
 No cambia ninguna decisión ni introduce requisitos.
 
 La autenticación en el tiempo real sigue **ADR-0014**, que se propuso desde este plan y se aceptó con `/architecture:review`.
+
+La tercera enmienda del 2026-10-21 cubre lo que salió al implementar la web (T014–T015):
+- **D4, avanzar en espera:** una canción que entraba con la cola vacía se quedaba pendiente, porque nada la pasaba a sonar, y el reproductor en espera no podía cumplir R008. Se añade `POST …/player/advance`, con su contrato, sus pruebas y la tarea T021. El usuario eligió esta opción frente a volver a poner en marcha el reproductor o que encolar empezara la canción.
+- **D5, la interfaz del proveedor tal como quedó:** `play(trackRef)`, `destroy()` y avisos con la referencia; la precarga real con `loadVideoById`; el formato `yt:<id>`.
+- **D10:** las dependencias de desarrollo de lint de C6.
+
+No introduce requisitos: el avance en espera es la forma de cumplir R008.

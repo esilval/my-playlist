@@ -25,6 +25,7 @@ from app.accounts.infrastructure.qr_image import SegnoQrImageRenderer
 from app.accounts.infrastructure.repositories import SqlAccountsUnitOfWork
 from app.accounts.interface import EstablishmentByPublicCode, ResolveOwner
 from app.sessions.api import music_session, player, realtime
+from app.sessions.application.advance_player import AdvancePlayer
 from app.sessions.application.claim_player import ClaimPlayer
 from app.sessions.application.close_session import CloseMusicSession
 from app.sessions.application.get_session import GetMusicSession
@@ -129,6 +130,7 @@ def create_app(
     app.state.get_music_session = GetMusicSession(unit_of_work=sessions, clock=clock)
     app.state.claim_player = ClaimPlayer(unit_of_work=sessions, publisher=publisher, clock=clock)
     app.state.player_heartbeat = PlayerHeartbeat(unit_of_work=sessions, clock=clock)
+    app.state.advance_player = AdvancePlayer(unit_of_work=sessions, publisher=publisher)
     app.state.realtime_tickets = RealtimeTicketIssuer(
         secret=settings.realtime_ticket_secret, clock=clock
     )

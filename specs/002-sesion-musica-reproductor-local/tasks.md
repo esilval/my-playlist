@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-10-21  |
-| Estado | Approved · 2f389f03fabf       |
+| Estado | Approved · 2cfb7b1a2298       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -170,7 +170,7 @@
 - **Estado:** `[x]`
 - **Requisitos:** R013
 - **Depende de:** T009
-- **Archivos:** `src/realtime/{package.json,package-lock.json,tsconfig.json,eslint.config.js,.nvmrc,vitest.config.ts}`, `src/realtime/src/{server.ts,ticket.ts,rooms.ts}`, `src/realtime/test/{ticket.test.ts,rooms.test.ts}`
+- **Archivos:** `src/realtime/{package.json,package-lock.json,tsconfig.json,tsconfig.test.json,eslint.config.js,.nvmrc,vitest.config.ts}`, `src/realtime/src/{server.ts,ticket.ts,rooms.ts}`, `src/realtime/test/{ticket.test.ts,rooms.test.ts}`, `.gitignore` (salida del build de `src/realtime/`)
 - **Hecho cuando:**
   - `npm run lint` (eslint y tsc) y `npm test` pasan en `src/realtime`.
   - Pasan:
@@ -186,7 +186,7 @@
 - **Estado:** `[x]`
 - **Requisitos:** R008, R010, R011, R014
 - **Depende de:** T011
-- **Archivos:** `src/realtime/src/relay.ts`, `src/realtime/src/server.ts`, `src/realtime/test/relay.test.ts`
+- **Archivos:** `src/realtime/src/relay.ts`, `src/realtime/src/server.ts`, `src/realtime/test/{relay.test.ts,rooms.test.ts}`, `src/realtime/package.json` (script de pruebas contra Redis)
 - **Hecho cuando:** contra el Redis de docker-compose, pasan:
   - `F002_R014 un mensaje de est:{id} llega a su sala en menos de 1 s`;
   - `F002_R014 un mensaje de est:{a} no llega a la sala de b`;
@@ -207,7 +207,7 @@
 
 ### T014 — Cliente de tiempo real y tipos de la API en la web
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R008, R010, R011, R014
 - **Depende de:** T007, T009, T012
 - **Archivos:** `src/web/src/api/schema.d.ts` (regenerado), `src/web/src/realtime/{client.ts,useRoomEvents.ts}`, `src/web/src/realtime/client.test.ts`, `src/web/package.json`, `src/web/package-lock.json`
@@ -221,7 +221,7 @@
 
 ### T015 — Adaptadores de proveedor de reproducción `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R005, R007
 - **Depende de:** —
 - **Archivos:** `src/web/src/features/player/provider/{types.ts,fake.ts,youtube.ts,index.ts}`, `src/web/src/features/player/provider/{fake.test.ts,youtube.test.ts}`
@@ -234,16 +234,16 @@
 
 ### T016 — Reproductor del local
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R004, R005, R006, R007, R008, R009, R010, R011, R012
-- **Depende de:** T014, T015
+- **Depende de:** T014, T015, T021
 - **Archivos:** `src/web/src/features/player/{PlayerController.ts,pendingReports.ts,Player.tsx,Player.test.tsx}`, `src/web/src/routes/player.tsx`, `src/web/src/router.tsx` (ruta `/panel/reproductor`)
 - **Hecho cuando:** pasan, con el proveedor falso, la API falsa y el tiempo real falso:
   - `F002_R004 poner en marcha reproduce la primera pendiente`;
   - `F002_R005 al terminar informa ended y reproduce la siguiente`;
   - `F002_R006 no reproduce una canción que el servidor ya dio por sonada`;
   - `F002_R007 sin sonar en 10 s informa failed y sigue`;
-  - `F002_R008 en espera no suena y reproduce al llegar queue.changed`;
+  - `F002_R008 en espera no suena y reproduce al llegar queue.changed` (pide `POST …/player/advance`, D4);
   - `F002_R008 un salto de versión en el latido hace pedir el estado`;
   - `F002_R009 sin sesión abierta lo indica y no reproduce`;
   - `F002_R010 ante player_superseded o player.claimed se detiene y lo indica`;
@@ -255,7 +255,7 @@
 
 ### T017 — Tarjeta de sesión de música en el panel
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R002, R007, R011, R014
 - **Depende de:** T014
 - **Archivos:** `src/web/src/features/music-session/{MusicSessionCard.tsx,MusicSessionCard.test.tsx,useMusicSession.ts}`, `src/web/src/features/owner-panel/Panel.tsx`
@@ -299,7 +299,7 @@
 
 ### T020 — Reproductor ante el cierre de la sesión iniciada
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R015
 - **Depende de:** T016
 - **Archivos:** `src/web/src/features/player/{PlayerController.ts,Player.tsx,Player.test.tsx}`
@@ -310,6 +310,22 @@
   - `F002_R015 si los informes guardados reciben player_superseded se descartan y pone en marcha como en R010`.
 
   El reproductor usa su propia instancia del cliente de la API, con una `navigate` que no redirige (D11).
+
+### T021 — Avanzar en espera
+
+- **Estado:** `[x]`
+- **Requisitos:** R008, R010, R013
+- **Depende de:** T007
+- **Archivos:** `src/backend/app/sessions/domain/music_session.py`, `src/backend/app/sessions/application/advance_player.py`, `src/backend/app/sessions/api/player.py`, `src/backend/app/main.py`, `src/backend/tests/unit/test_music_session_rules.py`, `src/backend/tests/integration/{test_player.py,test_isolation.py}`, `src/web/src/api/schema.d.ts` (tipos regenerados)
+- **Hecho cuando:** pasan:
+  - `test_F002_R008_avanzar_en_espera_empieza_la_primera_pendiente` (unitaria);
+  - `test_F002_R008_avanzar_con_una_cancion_sonando_no_cambia_nada` (unitaria; tampoco sin pendientes, y la versión no crece);
+  - `test_F002_R008_avanzar_en_espera_empieza_la_que_entro_y_publica_queue_changed` (integración);
+  - `test_F002_R010_avanzar_con_epoca_vieja_da_409_player_superseded`;
+  - `test_F002_R011_avanzar_con_la_sesion_cerrada_da_409_no_open_session`;
+  - la batería de aislamiento incluye la ruta nueva (R013).
+
+  `schema.d.ts` tiene la ruta nueva.
 
 ## Cobertura
 
@@ -322,12 +338,12 @@
 | R005 | T002, T007, T015, T016, T018, T019 |
 | R006 | T001, T002, T007, T016 |
 | R007 | T002, T007, T015, T016, T017, T018, T019 |
-| R008 | T003, T006, T008, T012, T014, T016, T018 |
+| R008 | T003, T006, T008, T012, T014, T016, T018, T021 |
 | R009 | T006, T016 |
-| R010 | T002, T006, T007, T012, T014, T016, T018 |
-| R011 | T002, T004, T005, T007, T012, T014, T016, T017, T018 |
+| R010 | T002, T006, T007, T012, T014, T016, T018, T021 |
+| R011 | T002, T004, T005, T007, T012, T014, T016, T017, T018, T021 |
 | R012 | T002, T007, T016, T018 |
-| R013 | T001, T005, T009, T010, T011 |
+| R013 | T001, T005, T009, T010, T011, T021 |
 | R014 | T003, T006, T009, T012, T013, T014, T017, T018 |
 | R015 | T018, T020 |
 
