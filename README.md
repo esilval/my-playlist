@@ -145,6 +145,7 @@ La API aplica las migraciones al arrancar, y el servicio `worker` envía los cor
 | e2e con Playwright y Mailpit | `src/web` | `npx playwright test` (con el compose levantado) |
 | Carga con k6 | `src/perf` | ver [`src/perf/README.md`](src/perf/README.md) |
 | Escaneo del QR impreso (manual) | `docs/qa` | [`docs/qa/qr-escaneo.md`](docs/qa/qr-escaneo.md) |
+| Reproductor con YouTube real (manual) | `docs/qa` | [`docs/qa/reproductor-youtube.md`](docs/qa/reproductor-youtube.md) |
 
 El CI (`.github/workflows/ci.yml`) corre lint, tipos y pruebas del backend, de la web y del tiempo real solo si cambia su carpeta. Las pruebas de integración corren contra PostgreSQL y Redis de servicio, y comprueba que los tipos de la API generados para la web estén al día.
 
