@@ -42,7 +42,7 @@ test("F001_R021 dos contextos, ambos expulsados tras restablecer", async ({ brow
   await resetPassword(recovery, email);
 
   for (const page of [first, second]) {
-    await page.goto("/panel");
+    await page.goto("/panel", { waitUntil: "commit" }); // redirige al recibir el 401
     await expect(page).toHaveURL(/\/entrar$/);
   }
   await loginInUi(second, email, NEW_PASSWORD);

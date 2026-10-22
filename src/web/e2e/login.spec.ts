@@ -30,6 +30,8 @@ test("F001_R008 cerrar sesión pide entrar", async ({ page, request, baseURL }) 
   await page.getByRole("button", { name: "Cerrar sesión" }).click();
 
   await expect(page).toHaveURL(/\/entrar$/);
-  await page.goto("/panel");
+  // El panel redirige a /entrar en cuanto la API responde 401, a veces antes de que la
+  // página termine de cargar: basta con que empiece la navegación.
+  await page.goto("/panel", { waitUntil: "commit" });
   await expect(page).toHaveURL(/\/entrar$/);
 });

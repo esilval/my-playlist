@@ -268,7 +268,7 @@
 
 ### T018 — Pruebas e2e del reproductor
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R005, R007, R008, R010, R011, R012, R014, R015
 - **Depende de:** T008, T013, T016, T017, T020
 - **Archivos:** `src/web/e2e/player.spec.ts`, `src/web/e2e/helpers/queue.ts`

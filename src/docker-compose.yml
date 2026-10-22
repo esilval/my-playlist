@@ -119,6 +119,11 @@ services:
     environment:
       API_PROXY_TARGET: http://api:8000
       REALTIME_PROXY_TARGET: http://realtime:3001
+      # Proveedor de reproducción del servidor de desarrollo (plan D5): el falso, que
+      # entiende las referencias fake:… de `devtools enqueue` y usan las pruebas e2e.
+      # Con YouTube real (prueba manual, T019): VITE_PLAYBACK_PROVIDER=youtube. El build
+      # de producción siempre usa YouTube.
+      VITE_PLAYBACK_PROVIDER: ${VITE_PLAYBACK_PROVIDER:-fake}
     ports:
       - "${WEB_PORT:-5173}:5173"
     depends_on:
