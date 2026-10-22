@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-10-21  |
-| Estado | Approved · 2cfb7b1a2298       |
+| Estado | Approved · cc67b7e8a5d2       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -211,6 +211,7 @@
 - **Requisitos:** R008, R010, R011, R014
 - **Depende de:** T007, T009, T012
 - **Archivos:** `src/web/src/api/schema.d.ts` (regenerado), `src/web/src/realtime/{client.ts,useRoomEvents.ts}`, `src/web/src/realtime/client.test.ts`, `src/web/package.json`, `src/web/package-lock.json`
+- **Nota:** al implementar T016 se corrigió `observeVersion` en `client.ts`: cualquier versión mayor en el latido hace pedir el estado (D3).
 - **Hecho cuando:**
   - `npm run gen:api` deja `schema.d.ts` con las rutas nuevas, sin diferencias en el CI.
   - Pasan, con un socket falso:
@@ -258,7 +259,7 @@
 - **Estado:** `[x]`
 - **Requisitos:** R001, R002, R007, R011, R014
 - **Depende de:** T014
-- **Archivos:** `src/web/src/features/music-session/{MusicSessionCard.tsx,MusicSessionCard.test.tsx,useMusicSession.ts}`, `src/web/src/features/owner-panel/Panel.tsx`
+- **Archivos:** `src/web/src/features/music-session/{MusicSessionCard.tsx,MusicSessionCard.test.tsx,useMusicSession.ts}`, `src/web/src/features/owner-panel/Panel.tsx`, `src/web/src/test/setup.ts` (un socket inerte para las pruebas que no inyectan uno)
 - **Hecho cuando:** pasan:
   - `F002_R001 abrir muestra la sesión abierta`;
   - `F002_R002 sin verificar muestra el aviso con reenvío y sigue cerrada`;
@@ -271,7 +272,7 @@
 - **Estado:** `[x]`
 - **Requisitos:** R005, R007, R008, R010, R011, R012, R014, R015
 - **Depende de:** T008, T013, T016, T017, T020
-- **Archivos:** `src/web/e2e/player.spec.ts`, `src/web/e2e/helpers/queue.ts`
+- **Archivos:** `src/web/e2e/player.spec.ts`, `src/web/e2e/helpers/queue.ts`, `src/docker-compose.yml` (`VITE_PLAYBACK_PROVIDER` en el servicio web), `src/web/e2e/{login.spec.ts,password-reset.spec.ts}` (`waitUntil: "commit"` ante la redirección del 401)
 - **Hecho cuando:** `npx playwright test` pasa contra el entorno de docker-compose con `VITE_PLAYBACK_PROVIDER=fake`, y las canciones se agregan con `devtools enqueue`. Los tests son:
   - `F002_R005 A, B y C suenan en orden con huecos de menos de 3 s`;
   - `F002_R007 una canción que falla se salta en menos de 3 s y el panel avisa en menos de 1 s`;
@@ -302,7 +303,7 @@
 - **Estado:** `[x]`
 - **Requisitos:** R015
 - **Depende de:** T016
-- **Archivos:** `src/web/src/features/player/{PlayerController.ts,Player.tsx,Player.test.tsx}`
+- **Archivos:** `src/web/src/features/player/{PlayerController.ts,Player.tsx,Player.test.tsx}`, `src/web/src/test/fake-api.ts` (devuelve `fetch` y anota las peticiones en orden)
 - **Hecho cuando:** pasan, con el proveedor falso y la API falsa:
   - `F002_R015 ante un 401 termina la canción sin redirigir y no empieza la siguiente`;
   - `F002_R015 al terminar guarda el ended y muestra el aviso con el enlace a entrar`;
@@ -314,7 +315,7 @@
 ### T021 — Avanzar en espera
 
 - **Estado:** `[x]`
-- **Requisitos:** R008, R010, R013
+- **Requisitos:** R008, R010, R011, R013
 - **Depende de:** T007
 - **Archivos:** `src/backend/app/sessions/domain/music_session.py`, `src/backend/app/sessions/application/advance_player.py`, `src/backend/app/sessions/api/player.py`, `src/backend/app/main.py`, `src/backend/tests/unit/test_music_session_rules.py`, `src/backend/tests/integration/{test_player.py,test_isolation.py}`, `src/web/src/api/schema.d.ts` (tipos regenerados)
 - **Hecho cuando:** pasan:
