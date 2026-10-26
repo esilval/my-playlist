@@ -1,0 +1,17 @@
+# Escáner de secretos del CI (constitución, «Seguridad y datos»): las reglas por defecto
+# de gitleaks, más estas excepciones.
+#
+# Son valores de prueba versionados a propósito, no secretos reales: los secretos de
+# las pruebas del ticket de tiempo real (ADR-0014) y de sus vectores compartidos entre el
+# monolito y C6. Se exceptúan por su valor exacto, no por archivo, para que un secreto de
+# verdad en esos mismos archivos se siga detectando.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Valores de prueba del ticket de tiempo real"
+regexes = [
+  '''secreto-de-produccion-de-al-menos-32-caracteres''',
+  '''secreto-de-los-vectores-de-prueba-0123456789''',
+  '''secreto-de-pruebas-de-las-salas-0123456789''',
+]

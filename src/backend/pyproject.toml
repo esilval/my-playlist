@@ -25,6 +25,7 @@ dev = [
     "httpx2>=2.13",
     "mypy>=1.13",
     "pytest>=8.3",
+    "pytest-cov>=7.1.0",
     "ruff>=0.8",
     "zxing-cpp>=2.2",
 ]
@@ -35,6 +36,14 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+
+# Cobertura (constitución, «Pruebas»): la mide el CI con unitarias e integración juntas
+# (`pytest --cov`). El suelo es el valor del primer registro y solo puede subir.
+[tool.coverage.run]
+source = ["app"]
+
+[tool.coverage.report]
+fail_under = 91
 
 [tool.ruff]
 line-length = 100

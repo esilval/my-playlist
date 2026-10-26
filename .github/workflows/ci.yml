@@ -105,7 +105,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --locked
       - run: uv run alembic upgrade head
-      - run: uv run pytest tests/integration
+      # Unitarias e integración juntas: la cobertura se mide sobre todas, con el suelo de
+      # pyproject.toml (constitución, «Pruebas»).
+      - run: uv run pytest --cov
 
   web:
     needs: changes
@@ -123,7 +125,8 @@ jobs:
           cache-dependency-path: src/web/package-lock.json
       - run: npm ci
       - run: npm run lint
-      - run: npm test
+      # Con el suelo de cobertura de vite.config.ts (constitución, «Pruebas»).
+      - run: npm run test:coverage
       - run: npm run build
 
   # Servicio de tiempo real (feature 002, plan D9): lint, tipos, build y pruebas contra
@@ -157,7 +160,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
-      - run: npm test
+      # Con el suelo de cobertura de vitest.config.ts (constitución, «Pruebas»).
+      - run: npm run test:coverage
 
   # Los tipos de la SPA salen del OpenAPI del backend (ADR-0002): si alguien cambia la
   # API sin regenerarlos, el desfase se ve aquí, cambie el backend o la web.
@@ -182,3 +186,58 @@ jobs:
       - name: Los tipos generados están al día
         run: git diff --exit-code -- src/web/src/api/schema.d.ts
 
+  # Trazabilidad (constitución, principio 2): todo MUST con tarea, prueba y criterios, en
+  # cada feature de specs/. Usa el script del plugin sdd, que no tiene dependencias, en
+  # un commit fijo; se actualiza a la vez que el plugin.
+  trace:
+    runs-on: ubuntu-latest
+    env:
+      SDD_COMMIT: ebce9703d6e3d1efe415db4a048e76526b488e02
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: esilval/edwinlabs-engineering-tools
+          ref: ${{ env.SDD_COMMIT }}
+          path: .sdd-plugin
+      - name: sdd trace --check en cada feature
+        run: |
+          mkdir -p .sdd
+          status=0
+          for feature in specs/[0-9]*/; do
+            slug=$(basename "$feature")
+            echo "::group::$slug"
+            echo "$slug" > .sdd/current
+            python3 .sdd-plugin/plugins/sdd/scripts/sdd.py trace --check || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+  # Ningún secreto versionado (constitución, «Seguridad y datos»): gitleaks sobre todo el
+  # historial, con las excepciones de .gitleaks.toml. Complementa el escaneo de secretos
+  # de GitHub, que solo reconoce formatos de proveedores conocidos.
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        run: >-
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.28.0
+          git /repo --config /repo/.gitleaks.toml --redact --no-banner
+
+  # El check obligatorio de main (protección de rama). Los demás trabajos se saltan
+  # cuando no cambia su carpeta; un trabajo saltado cuenta como bueno, uno que falla o se
+  # cancela, no.
+  ci:
+    if: always()
+    needs: [changes, backend, backend-integration, web, realtime, api-types, trace, secrets]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Todos los trabajos pasaron o se saltaron
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -Eq '"(failure|cancelled)"'; then exit 1; fi

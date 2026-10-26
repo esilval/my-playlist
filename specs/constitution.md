@@ -2,7 +2,7 @@
 
 | Campo | Valor      |
 | ----- | ---------- |
-| Fecha | 2026-10-21 |
+| Fecha | 2026-10-26 |
 
 > Reglas que ninguna spec, plan o tarea puede violar. Si una regla aquí impide
 > algo que hace falta, se cambia la regla explícitamente, no se ignora.
@@ -55,12 +55,19 @@
 - Los flujos de usuario de una feature tienen pruebas e2e con Playwright contra el entorno de docker-compose. Cuando hay correo de por medio, se leen en Mailpit.
 - Un requisito no funcional de rendimiento se verifica con una prueba de carga en `src/perf/`, cuyo resultado queda anotado en el propio script.
 - Una prueba manual (impresión, dispositivos reales) se documenta en `docs/qa/`, con dispositivos y resultado. Una tarea que depende de ella no se cierra sin ese resultado.
-- **Cobertura:** hoy no se mide (ver Preguntas abiertas). No hay umbral hasta medirla y fijar el suelo.
+- **Cobertura:** el CI mide la cobertura de líneas y falla si baja del suelo:
+  - backend: 91 %, con unitarias e integración juntas (`uv run pytest --cov`, suelo en `pyproject.toml`);
+  - web: 90 % (`npm run test:coverage`, suelo en `vite.config.ts`);
+  - tiempo real: 85 % (`npm run test:coverage`, suelo en `vitest.config.ts`).
+
+  El suelo es el valor del primer registro (2026-10-26), redondeado hacia abajo, y solo puede subir: cuando la cobertura suba, se sube el suelo en el mismo PR.
 
 ## Seguridad y datos
 
 - **Secretos:**
   - Ningún secreto se versiona. `.env` está en `.gitignore`.
+  - El CI pasa gitleaks sobre todo el historial en cada PR. Sus excepciones están en `.gitleaks.toml`, por valor exacto y con su motivo; añadir una exige revisarla en el PR.
+  - GitHub tiene activados el escaneo de secretos y la protección al hacer push.
   - `src/.env.example` solo lleva valores locales de desarrollo.
   - En producción, los secretos llegan por el entorno de AWS (ADR-0006).
 - **Contraseñas:** se guardan solo como hash Argon2id, con los parámetros que fija la configuración (plan D3 de la feature 001).
@@ -85,7 +92,7 @@
   - aprobar `spec.md`, `plan.md` y `tasks.md` (`/sdd:approve`);
   - aceptar o rechazar un ADR (`/architecture:review`) y aprobar la arquitectura (`/architecture:approve`);
   - cambiar esta constitución;
-  - fusionar en `main`: todo cambio llega por PR con el CI en verde, y el merge lo hace una persona;
+  - fusionar en `main`: todo cambio llega por PR con el check `ci` en verde, y el merge lo hace una persona. La protección de la rama lo impone también a los administradores, y prohíbe el force-push y el borrado;
   - desplegar a producción.
 
 ## Comprobación
@@ -96,7 +103,7 @@ que alguien se acuerde, y eso hay que saberlo.
 | Regla | Nivel | Mecanismo | Suelo actual |
 | ----- | ----- | --------- | ------------ |
 | Sin código sin spec, plan y tareas aprobados (principio 1) | mecánica | compuerta del plugin `sdd` (hook `guard` y `audit`) | — |
-| Todo MUST con tarea, prueba y criterios; pruebas con `F00N_R0xx` (principio 2) | mecánica | `sdd trace`, en local | 0 errores en la feature 001; **pendiente de automatizar en CI** |
+| Todo MUST con tarea, prueba y criterios; pruebas con `F00N_R0xx` (principio 2) | mecánica | `sdd trace`, en local y en el CI (`trace`, `sdd trace --check` en cada feature, con el plugin en un commit fijo) | 0 errores en cada feature |
 | Formato y lint de Python | mecánica | hook de calidad del plugin y CI (`backend`) | 0 avisos |
 | Tipos de Python (`mypy --strict`) | mecánica | CI (`backend`) | 0 errores |
 | Lint y tipos de web | mecánica | hook de calidad del plugin y CI (`web`) | 0 avisos |
@@ -105,15 +112,15 @@ que alguien se acuerde, y eso hay que saberlo.
 | Toda tabla, salvo `login_attempt`, tiene política RLS (principio 3, S8) | mecánica | prueba de `test_schema.py`, que recorre `pg_tables` | — |
 | Aislamiento entre establecimientos en la API (principio 3) | mecánica | batería `test_isolation.py`, que se amplía con cada feature | — |
 | Integración contra PostgreSQL real, nunca SQLite | mecánica | CI (`backend-integration` con PostgreSQL de servicio) | — |
-| Ningún secreto versionado | mecánica | `.gitignore`; **pendiente de automatizar** (escáner de secretos en CI) | — |
+| Ningún secreto versionado | mecánica | `.gitignore`; CI (`secrets`, gitleaks con `.gitleaks.toml`); escaneo de secretos y protección al hacer push de GitHub | 0 hallazgos |
 | Nada sensible en logs ni respuestas | revisable | revisión del diff; pruebas puntuales (422 sin la contraseña) | — |
 | Datos mínimos y Ley 1581 (principio 4) | revisable | revisión del diff y de la spec; prueba de privacidad del registro | — |
 | Dependencias nuevas justificadas, y las prohibidas (S7, S9) | revisable | revisión del plan y del diff; **candidata a automatizar** (lista de prohibidas contra `uv.lock` y `package-lock.json`) | — |
 | Solo C2 modifica la cola (principio 6, S2) | revisable | revisión del diff | — |
 | Sin instalación (principio 5) | juicio | criterio humano al aprobar la spec | — |
 | Decisiones transversales como ADR (principio 7) | juicio | criterio humano en `/sdd:plan` y `/architecture:review` | — |
-| Merge a `main` por PR con CI en verde | mecánica | **pendiente de automatizar** (protección de rama en GitHub); hoy lo cumple el flujo de trabajo | — |
-| Cobertura de pruebas | mecánica | **sin medir** | — |
+| Merge a `main` por PR con CI en verde | mecánica | protección de rama en GitHub: PR obligatorio y el check `ci` en verde, también para administradores | — |
+| Cobertura de pruebas | mecánica | CI (`backend-integration`, `web`, `realtime`), que falla por debajo del suelo | líneas: backend 91 %, web 90 %, tiempo real 85 % |
 
 Niveles: **mecánica** (un script la comprueba), **revisable** (requiere leer el
 diff y juzgar), **juicio** (la decide una persona caso por caso).
@@ -124,7 +131,14 @@ termina desactivado, y eso desacredita a todas las demás comprobaciones.
 
 ## Preguntas abiertas
 
-- ¿Se mide la cobertura? Haría falta añadir `pytest-cov` y la cobertura de Vitest; el suelo sería el valor del primer registro.
-- ¿Se añade `sdd trace --check` al CI, para que un requisito sin prueba bloquee el PR?
-- ¿Se activa en GitHub la protección de `main`, con PR obligatorio y CI en verde?
-- ¿Se añade un escáner de secretos (por ejemplo, gitleaks) al CI?
+Ninguna.
+
+## Historial de cambios
+
+- **2026-10-26 — Cierre de las cuatro preguntas abiertas.** Las decidió el usuario:
+  - **Cobertura:** se mide en el CI con suelo, por el ratchet. Dependencias nuevas, solo de desarrollo:
+    - `pytest-cov`: integra la cobertura en pytest y respeta `fail_under`. Se descartó `coverage run` a mano, que obliga a repetir la configuración de pytest.
+    - `@vitest/coverage-v8`: es el proveedor oficial de Vitest. Se descartó `@vitest/coverage-istanbul`, más lento porque instrumenta el código.
+  - **`sdd trace --check` en el CI, bloqueante:** el script del plugin no tiene dependencias, y se descarga de su repositorio en un commit fijo. Se descartó copiarlo al repositorio, porque se desfasaría del plugin sin que nadie lo viera.
+  - **Protección de `main`:** PR obligatorio y el check `ci` en verde, también para los administradores, sin force-push ni borrado. No se exige la aprobación de otra persona, porque hoy hay un solo desarrollador y no podría aprobar sus propios PR. `ci` es un trabajo que agrupa a los demás: los trabajos que se saltan por no cambiar su carpeta cuentan como buenos.
+  - **Escáner de secretos:** gitleaks en el CI, desde su imagen oficial de Docker, fijada a una versión, sin añadir dependencias a los proyectos. Se descartó confiar solo en el escaneo de GitHub, que no reconoce secretos genéricos. Las cuatro coincidencias que encontró en el historial eran valores de prueba versionados a propósito, y quedan como excepciones por su valor exacto.
