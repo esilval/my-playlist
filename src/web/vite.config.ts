@@ -19,5 +19,13 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
+    // Cobertura (constitución, «Pruebas»): `npm run test:coverage`, en el CI. El suelo
+    // es el valor del primer registro y solo puede subir.
+    coverage: {
+      provider: "v8",
+      include: ["src/**"],
+    exclude: ["src/**/*.test.{ts,tsx}", "src/test/**", "src/api/schema.d.ts"],
+      thresholds: { lines: 89 },
+    },
   },
 });
