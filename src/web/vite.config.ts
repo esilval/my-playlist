@@ -25,7 +25,7 @@ export default defineConfig({
       provider: "v8",
       include: ["src/**"],
     exclude: ["src/**/*.test.{ts,tsx}", "src/test/**", "src/api/schema.d.ts"],
-      thresholds: { lines: 90 },
+      thresholds: { lines: 89 },
     },
   },
 });

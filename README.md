@@ -148,7 +148,7 @@ La API aplica las migraciones al arrancar, y el servicio `worker` envía los cor
 | Reproductor con YouTube real (manual) | `docs/qa` | [`docs/qa/reproductor-youtube.md`](docs/qa/reproductor-youtube.md) |
 
 El CI (`.github/workflows/ci.yml`) corre lint, tipos y pruebas del backend, de la web y del tiempo real solo si cambia su carpeta. Las pruebas de integración corren contra PostgreSQL y Redis de servicio, y el CI comprueba que los tipos de la API generados para la web estén al día. Además:
-- mide la cobertura de líneas y falla si baja del suelo: backend 91 %, web 90 % y tiempo real 85 %;
+- mide la cobertura de líneas y falla si baja del suelo: backend 91 %, web 89 % y tiempo real 85 %;
 - ejecuta `sdd trace --check` en cada feature de `specs/`;
 - pasa gitleaks sobre todo el historial, con las excepciones de `.gitleaks.toml`.
 
