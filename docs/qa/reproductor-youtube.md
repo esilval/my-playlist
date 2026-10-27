@@ -123,13 +123,42 @@ Si alguno falla, anota cuál y qué pasó.
 
 | Fecha | Navegador | Versión | Sistema | 1. Puesta en marcha | 2. Huecos (ms) | 3. No insertable | 4. Una hora en segundo plano | Resultado | Notas |
 |-------|-----------|---------|---------|---------------------|----------------|------------------|------------------------------|-----------|-------|
-| _pendiente_ | Chrome | | | | | | | | |
-| _pendiente_ | Edge | | | | | | | | |
-| _pendiente_ | Firefox | | | | | | | | |
-| _pendiente_ | Safari | | macOS | | | | | | |
+| 2026-10-27 | Chrome | no anotada | macOS | pasa | pasa (no anotados) | pasa | pasa | *pasa* | Resultado comunicado por el usuario, sin versión ni huecos medidos. |
+| — | Edge | — | — | — | — | — | — | *sin probar* | No se pudo probar por limitaciones de la máquina. |
+| 2026-10-27 | Firefox | no anotada | macOS | pasa | pasa (no anotados) | pasa | pasa | *pasa* | Resultado comunicado por el usuario, sin versión ni huecos medidos. |
+| 2026-10-27 | Safari | no anotada | macOS | — | — | — | — | *no aplicable en local* | No se llega al reproductor: no se puede iniciar sesión. Ver «Safari en local». |
 
 Hasta que estas filas tengan resultado, T019 sigue pendiente. Las pruebas de componente
 y las e2e ya cubren el orden, los huecos y los fallos con el proveedor falso, en
 `src/web/src/features/player/` y `src/web/e2e/player.spec.ts`. No sustituyen esta
 prueba: el IFrame de YouTube, su publicidad y los navegadores reales son justo lo que
 esas pruebas no ven.
+
+## Safari en local
+
+En el entorno local, Safari no puede iniciar sesión. Al verificar el correo vuelve a
+`/entrar`, y entrar después tampoco funciona.
+
+**Causa.** La cookie de sesión lleva `Secure`, como pide la constitución, así que solo
+debe viajar por HTTPS. Chrome y Firefox hacen una excepción con `http://localhost`;
+Safari no, y descarta la cookie. Se comprobó el 2026-10-27 con WebKit, el motor de
+Safari, contra el compose:
+
+| Navegador | `POST /api/auth/login` | `GET /api/owner/me` | Cookie guardada |
+|-----------|------------------------|---------------------|-----------------|
+| WebKit | 200 | 401 | ninguna |
+| Chromium | 200 | 200 | `mp_session` (`Secure`) |
+
+**Consecuencia.** No es un defecto del reproductor ni del producto: en un entorno
+servido por HTTPS no ocurre. Safari sigue en Q8, y esta prueba queda pendiente en
+Safari hasta que haya un entorno HTTPS (la feature de infraestructura).
+
+## Cierre
+
+T019 se cerró el 2026-10-27 por decisión del usuario, como excepción anotada a la
+regla de la constitución, que pide el resultado de la prueba manual para cerrar la
+tarea. Quedan pendientes:
+- **Safari:** probarla en un entorno HTTPS.
+- **Edge:** probarla cuando haya una máquina con Edge.
+- **Huecos:** apuntar la versión de cada navegador y los huecos medidos, en
+  milisegundos, la próxima vez que se pase esta prueba.

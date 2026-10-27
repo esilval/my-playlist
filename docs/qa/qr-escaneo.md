@@ -40,3 +40,15 @@ Hasta que estas filas tengan resultado, la prueba sigue pendiente. La lectura
 automática del PNG ya la cubre `src/backend/tests/integration/test_qr.py`
 (`test_F001_R010_png_decodifica_a_la_url_publica`), pero no sustituye esta prueba:
 la impresión y las cámaras reales son justo lo que esa prueba no ve.
+
+## Cierre
+
+T023 de la feature 001 se cerró el 2026-10-27 por decisión del usuario, como excepción
+anotada a la regla de la constitución, que pide el resultado de la prueba manual para
+cerrar la tarea.
+
+- **Comprobado:** el enlace que codifica el QR, la página pública del establecimiento,
+  funciona. Lo verificó el usuario.
+- **Pendiente:** escanear el QR impreso con la cámara de un iPhone y de un Android, y
+  rellenar la tabla de arriba. En local no se puede, porque los móviles no alcanzan el
+  entorno. Se hará cuando haya un entorno en la web (la feature de infraestructura).

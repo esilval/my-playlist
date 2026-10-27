@@ -278,7 +278,7 @@
 
 ### T023 — Prueba de carga y guía de escaneo del QR
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R005, R010, R023
 - **Depende de:** T022
 - **Archivos:** `src/perf/accounts.js`, `docs/qa/qr-escaneo.md`, `src/backend/app/shared/cpu.py`, `src/backend/app/shared/config.py`, `src/backend/app/accounts/application/{register.py,login.py,confirm_password_reset.py}`

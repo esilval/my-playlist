@@ -288,7 +288,7 @@
 
 ### T019 — Prueba manual con YouTube real
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R005, R007
 - **Depende de:** T018
 - **Archivos:** `docs/qa/reproductor-youtube.md`
