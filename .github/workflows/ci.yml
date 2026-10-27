@@ -187,8 +187,9 @@ jobs:
         run: git diff --exit-code -- src/web/src/api/schema.d.ts
 
   # Trazabilidad (constitución, principio 2): todo MUST con tarea, prueba y criterios, en
-  # cada feature de specs/. Usa el script del plugin sdd, que no tiene dependencias, en
-  # un commit fijo; se actualiza a la vez que el plugin.
+  # cada feature de specs/. Una feature en curso puede tener aún requisitos sin prueba;
+  # ver .github/scripts/trace_check.py. Usa el script del plugin sdd, que no tiene
+  # dependencias, en un commit fijo; se actualiza a la vez que el plugin.
   trace:
     runs-on: ubuntu-latest
     env:
@@ -200,18 +201,8 @@ jobs:
           repository: esilval/edwinlabs-engineering-tools
           ref: ${{ env.SDD_COMMIT }}
           path: .sdd-plugin
-      - name: sdd trace --check en cada feature
-        run: |
-          mkdir -p .sdd
-          status=0
-          for feature in specs/[0-9]*/; do
-            slug=$(basename "$feature")
-            echo "::group::$slug"
-            echo "$slug" > .sdd/current
-            python3 .sdd-plugin/plugins/sdd/scripts/sdd.py trace --check || status=1
-            echo "::endgroup::"
-          done
-          exit $status
+      - name: sdd trace en cada feature
+        run: python3 .github/scripts/trace_check.py .sdd-plugin/plugins/sdd/scripts/sdd.py
 
   # Ningún secreto versionado (constitución, «Seguridad y datos»): gitleaks sobre todo el
   # historial, con las excepciones de .gitleaks.toml. Complementa el escaneo de secretos
