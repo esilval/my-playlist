@@ -2,7 +2,7 @@
 
 | Campo | Valor      |
 | ----- | ---------- |
-| Fecha | 2026-10-26 |
+| Fecha | 2026-10-27 |
 
 > Reglas que ninguna spec, plan o tarea puede violar. Si una regla aquí impide
 > algo que hace falta, se cambia la regla explícitamente, no se ignora.
@@ -103,7 +103,7 @@ que alguien se acuerde, y eso hay que saberlo.
 | Regla | Nivel | Mecanismo | Suelo actual |
 | ----- | ----- | --------- | ------------ |
 | Sin código sin spec, plan y tareas aprobados (principio 1) | mecánica | compuerta del plugin `sdd` (hook `guard` y `audit`) | — |
-| Todo MUST con tarea, prueba y criterios; pruebas con `F00N_R0xx` (principio 2) | mecánica | `sdd trace`, en local y en el CI (`trace`, `sdd trace --check` en cada feature, con el plugin en un commit fijo) | 0 errores en cada feature |
+| Todo MUST con tarea, prueba y criterios; pruebas con `F00N_R0xx` (principio 2) | mecánica | `sdd trace`, en local y en el CI (`trace`, en cada feature, con el plugin en un commit fijo). En una feature con tareas abiertas, un MUST sin prueba todavía no bloquea; cualquier otro error sí, también una tarea cerrada sin su prueba | 0 errores en cada feature cerrada |
 | Formato y lint de Python | mecánica | hook de calidad del plugin y CI (`backend`) | 0 avisos |
 | Tipos de Python (`mypy --strict`) | mecánica | CI (`backend`) | 0 errores |
 | Lint y tipos de web | mecánica | hook de calidad del plugin y CI (`web`) | 0 avisos |
@@ -142,3 +142,9 @@ Ninguna.
   - **`sdd trace --check` en el CI, bloqueante:** el script del plugin no tiene dependencias, y se descarga de su repositorio en un commit fijo. Se descartó copiarlo al repositorio, porque se desfasaría del plugin sin que nadie lo viera.
   - **Protección de `main`:** PR obligatorio y el check `ci` en verde, también para los administradores, sin force-push ni borrado. No se exige la aprobación de otra persona, porque hoy hay un solo desarrollador y no podría aprobar sus propios PR. `ci` es un trabajo que agrupa a los demás: los trabajos que se saltan por no cambiar su carpeta cuentan como buenos.
   - **Escáner de secretos:** gitleaks en el CI, desde su imagen oficial de Docker, fijada a una versión, sin añadir dependencias a los proyectos. Se descartó confiar solo en el escaneo de GitHub, que no reconoce secretos genéricos. Las cuatro coincidencias que encontró en el historial eran valores de prueba versionados a propósito, y quedan como excepciones por su valor exacto.
+- **2026-10-27 — Trazabilidad de las features en curso.**
+  - **El problema:** con `sdd trace --check` estricto, la spec de una feature no se podía fusionar antes de implementarla, porque sus requisitos MUST aún no tienen prueba.
+  - **La regla nueva, que decidió el usuario:** mientras una feature tenga alguna tarea sin cerrar, `E-REQ-NO-TEST` no bloquea. Los demás errores sí, incluido `E-DONE-NO-TEST`: una tarea cerrada sin su prueba. Con todas sus tareas cerradas, cualquier error bloquea. La aplica `.github/scripts/trace_check.py`.
+  - **Alternativas descartadas:**
+    - Saltar las features en curso: no detectaría una tarea cerrada sin prueba hasta el final.
+    - Fusionar la spec junto con el código: deja las decisiones sin revisar en `main` hasta que la feature termina.

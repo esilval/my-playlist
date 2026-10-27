@@ -149,7 +149,7 @@ La API aplica las migraciones al arrancar, y el servicio `worker` envía los cor
 
 El CI (`.github/workflows/ci.yml`) corre lint, tipos y pruebas del backend, de la web y del tiempo real solo si cambia su carpeta. Las pruebas de integración corren contra PostgreSQL y Redis de servicio, y el CI comprueba que los tipos de la API generados para la web estén al día. Además:
 - mide la cobertura de líneas y falla si baja del suelo: backend 91 %, web 89 % y tiempo real 85 %;
-- ejecuta `sdd trace --check` en cada feature de `specs/`;
+- ejecuta `sdd trace` en cada feature de `specs/`. En una feature en curso, un requisito sin prueba aún no bloquea, pero una tarea cerrada sin su prueba sí;
 - pasa gitleaks sobre todo el historial, con las excepciones de `.gitleaks.toml`.
 
 El trabajo `ci` agrupa a todos y es el check obligatorio para fusionar en `main`. Las reglas y sus suelos están en la tabla «Comprobación» de [`specs/constitution.md`](specs/constitution.md).
