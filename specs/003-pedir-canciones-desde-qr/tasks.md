@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-10-27  |
-| Estado | Approved · ade6d4c6d55d       |
+| Estado | Approved · 65677228e18f       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -24,8 +24,8 @@
 
 ### T001 — Migración: quién pidió cada canción `P`
 
-- **Estado:** `[ ]`
-- **Requisitos:** R002, R006, R007
+- **Estado:** `[x]`
+- **Requisitos:** R002, R006
 - **Depende de:** —
 - **Archivos:** `src/backend/migrations/versions/0003_queue_requests.py`, `src/backend/tests/integration/test_sessions_schema.py`
 - **Hecho cuando:**
@@ -37,7 +37,7 @@
 
 ### T002 — Dominio: el pedido del cliente, con cupo y sin duplicadas `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R005, R006, R007, R008, R009
 - **Depende de:** —
 - **Archivos:** `src/backend/app/sessions/domain/{music_session.py,queue.py}`, `src/backend/tests/unit/test_music_session_rules.py`
@@ -54,7 +54,7 @@
 
 ### T003 — Token del dispositivo `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R002, R011
 - **Depende de:** —
 - **Archivos:** `src/backend/app/shared/device_token.py`, `src/backend/tests/unit/test_device_token.py`
@@ -66,7 +66,7 @@
 
 ### T004 — Catálogo: puerto y adaptadores de YouTube y falso `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003, R004, R012, R014
 - **Depende de:** —
 - **Archivos:** `src/backend/app/catalog/{__init__.py,domain/,infrastructure/youtube.py,infrastructure/fake.py}`, `src/backend/tests/unit/test_youtube_catalog.py`, `src/backend/tests/unit/test_fake_catalog.py`, `src/backend/pyproject.toml` y `src/backend/uv.lock` (`httpx2` a dependencias de ejecución, D9)
@@ -82,13 +82,13 @@
 
 ### T005 — Catálogo: caché, límite por dispositivo e interfaz
 
-- **Estado:** `[ ]`
-- **Requisitos:** R003, R012, R013
+- **Estado:** `[x]`
+- **Requisitos:** R003, R012, R013, R014
 - **Depende de:** T004
 - **Archivos:** `src/backend/app/catalog/{application/,infrastructure/cache.py,interface.py}`, `src/backend/tests/integration/test_catalog_cache.py`
 - **Hecho cuando:** contra el Redis del compose, pasan:
   - `test_F003_R003_una_busqueda_repetida_sale_de_la_cache`;
-  - `test_F003_R003_lookup_de_un_resultado_reciente_no_llama_al_proveedor`;
+  - `test_F003_R014_lookup_siempre_pregunta_al_proveedor_aunque_se_haya_buscado`;
   - `test_F003_R013_la_busqueda_11_en_un_minuto_lanza_search_rate_exceeded`;
   - `test_F003_R013_sin_redis_la_busqueda_sigue`;
   - `test_F003_R012_catalog_unavailable_llega_sin_cachear_nada`.
@@ -97,7 +97,7 @@
 
 ### T006 — Casos de uso del cliente en C2
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R005, R006, R007, R008, R009, R010, R014
 - **Depende de:** T001, T002, T005
 - **Archivos:** `src/backend/app/sessions/application/{request_track.py,client_view.py}`, `src/backend/app/sessions/infrastructure/repositories.py`, `src/backend/app/sessions/interface.py`, `src/backend/tests/integration/test_request_track.py`
@@ -112,10 +112,10 @@
 
 ### T007 — Configuración y composición
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R002, R003
 - **Depende de:** T003, T005
-- **Archivos:** `src/backend/app/shared/config.py`, `src/backend/app/main.py`, `src/docker-compose.yml`, `src/.env.example`, `src/backend/tests/unit/test_catalog_config.py`
+- **Archivos:** `src/backend/app/shared/config.py`, `src/backend/app/main.py`, `src/docker-compose.yml`, `src/.env.example`, `src/backend/tests/unit/test_catalog_config.py`; y las pruebas que construyen una configuración de producción o comprueban las capas: `src/backend/tests/unit/{test_health.py,test_email.py,test_realtime_ticket.py}`, `src/backend/tests/integration/test_enqueue_track.py`
 - **Hecho cuando:**
   - Pasan:
     - `test_F003_R003_en_local_el_catalogo_es_el_falso`;
@@ -125,9 +125,9 @@
 
 ### T008 — Rutas públicas del cliente
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R002, R003, R005, R006, R008, R009, R010, R012, R013, R014
-- **Depende de:** T006, T007
+- **Depende de:** T006, T007, T016
 - **Archivos:** `src/backend/app/sessions/api/client.py`, `src/backend/app/main.py`, `src/backend/tests/integration/test_client_music.py`
 - **Hecho cuando:** contra PostgreSQL, Redis y el catálogo falso, pasan:
   - `test_F003_R001_get_music_con_la_sesion_abierta_sin_sesion_iniciada`;
@@ -139,6 +139,7 @@
   - `test_F003_R008_con_la_sesion_cerrada_music_da_closed_y_search_y_requests_409`;
   - `test_F003_R009_post_requests_de_una_pendiente_da_409_already_queued`;
   - `test_F003_R014_post_requests_de_una_cancion_no_disponible_da_422_sin_gastar_cupo`;
+  - `test_F003_R014_una_referencia_de_mas_de_64_caracteres_da_422_sin_consultar_al_catalogo`;
   - `test_F003_R010_music_refleja_la_cancion_que_empieza_a_sonar`;
   - `test_F003_R012_search_con_el_proveedor_caido_da_503`;
   - `test_F003_R013_search_11_en_un_minuto_da_429_con_retry_after`;
@@ -147,7 +148,7 @@
 
 ### T009 — Ticket de tiempo real del cliente
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R010, R011
 - **Depende de:** T008
 - **Archivos:** `src/backend/app/shared/realtime_ticket.py`, `src/backend/app/sessions/api/client.py`, `src/backend/tests/integration/test_client_music.py`, `src/realtime/src/ticket.ts`, `src/realtime/test/{ticket.test.ts,rooms.test.ts}`, `src/realtime/test/fixtures/ticket-vectors.json`
@@ -237,23 +238,37 @@
   - la página del cliente;
   - cómo correr las pruebas nuevas.
 
+### T016 — C1: resolver el establecimiento de un código público
+
+- **Estado:** `[x]`
+- **Requisitos:** R001, R011
+- **Depende de:** —
+- **Archivos:** `src/backend/migrations/versions/0004_public_establishment_id.py`, `src/backend/app/accounts/{domain/ports.py,infrastructure/repositories.py,application/get_public_establishment.py,interface.py}`, `src/backend/tests/integration/test_definer_functions.py`
+- **Hecho cuando:**
+  - `alembic upgrade head` y `alembic downgrade -1` funcionan contra el PostgreSQL del compose.
+  - Pasan:
+    - `test_F003_R001_public_establishment_id_devuelve_solo_el_identificador`;
+    - `test_F003_R011_public_establishment_id_de_un_codigo_desconocido_o_mal_formado_no_devuelve_nada`.
+  - La batería de funciones `SECURITY DEFINER` incluye la nueva: solo `app_api` puede ejecutarla.
+  - `public_establishment` sigue devolviendo solo el nombre.
+
 ## Cobertura
 
 | Requisito | Tareas |
 | --------- | ------ |
-| R001 | T008, T012, T013 |
+| R001 | T008, T012, T013, T016 |
 | R002 | T001, T003, T007, T008 |
 | R003 | T004, T005, T007, T008, T012, T014, T015 |
 | R004 | T004 |
 | R005 | T002, T006, T008, T012, T013, T014 |
 | R006 | T001, T002, T006, T008, T012, T013 |
-| R007 | T001, T002, T006 |
+| R007 | T002, T006 |
 | R008 | T002, T006, T008, T012 |
 | R009 | T002, T006, T008, T012 |
 | R010 | T006, T008, T009, T011, T012, T013 |
-| R011 | T003, T009, T010 |
+| R011 | T003, T009, T010, T016 |
 | R012 | T004, T005, T008, T012, T015 |
 | R013 | T005, T008, T012 |
-| R014 | T004, T006, T008, T012 |
+| R014 | T004, T005, T006, T008, T012 |
 
 > Todo requisito MUST debe tener al menos una tarea. Los doce MUST (R001–R003, R005–R012 y R014) y los SHOULD R004 y R013 tienen tareas y pruebas previstas.

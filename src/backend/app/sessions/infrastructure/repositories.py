@@ -24,7 +24,9 @@ ONE_OPEN_INDEX = "music_session_one_open_idx"
 _SESSION_COLUMNS = (
     "id, establishment_id, opened_at, closed_at, player_epoch, player_seen_at, version"
 )
-_ITEM_COLUMNS = "id, position, track_ref, title, state, failure_reason, started_at, finished_at"
+_ITEM_COLUMNS = (
+    "id, position, track_ref, title, state, failure_reason, started_at, finished_at, requested_by"
+)
 
 
 class SqlSessionsRepository:
@@ -68,6 +70,7 @@ class SqlSessionsRepository:
                     failure_reason=item["failure_reason"],
                     started_at=item["started_at"],
                     finished_at=item["finished_at"],
+                    requested_by=item["requested_by"],
                 )
                 for item in items.mappings()
             ],
@@ -141,9 +144,10 @@ class SqlSessionsRepository:
         await self._connection.execute(
             text(
                 "INSERT INTO queue_item (id, establishment_id, session_id, position, "
-                "track_ref, title, state, failure_reason, started_at, finished_at) "
+                "track_ref, title, state, failure_reason, started_at, finished_at, requested_by) "
                 "VALUES (:id, :e, :s, :position, :track_ref, :title, "
-                "CAST(:state AS queue_item_state), :reason, :started_at, :finished_at)"
+                "CAST(:state AS queue_item_state), :reason, :started_at, :finished_at, "
+                ":requested_by)"
             ),
             {
                 "id": item.id,
@@ -156,6 +160,7 @@ class SqlSessionsRepository:
                 "reason": item.failure_reason,
                 "started_at": item.started_at,
                 "finished_at": item.finished_at,
+                "requested_by": item.requested_by,
             },
         )
 

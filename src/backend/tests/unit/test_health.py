@@ -5,7 +5,11 @@ from fastapi.testclient import TestClient
 
 APP_DIR = Path(__file__).resolve().parents[2] / "app"
 # Un dominio por módulo del monolito: accounts (C1) y sessions (C2).
-DOMAIN_DIRS = (APP_DIR / "accounts" / "domain", APP_DIR / "sessions" / "domain")
+DOMAIN_DIRS = (
+    APP_DIR / "accounts" / "domain",
+    APP_DIR / "sessions" / "domain",
+    APP_DIR / "catalog" / "domain",
+)
 FORBIDDEN_IN_DOMAIN = {"fastapi", "starlette", "sqlalchemy", "httpx", "httpx2"}
 
 

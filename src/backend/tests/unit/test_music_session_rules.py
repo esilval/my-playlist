@@ -1,14 +1,17 @@
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 from app.sessions.domain.music_session import (
+    QUOTA,
+    AlreadyQueued,
     MusicSession,
     NoOpenSession,
     PlayerEvent,
     PlayerEventType,
     PlayerSuperseded,
+    QuotaExceeded,
     SessionEventType,
     open_music_session,
 )
@@ -234,3 +237,134 @@ def test_F002_R011_avanzar_con_la_sesion_cerrada_lanza_no_open_session() -> None
 
     with pytest.raises(NoOpenSession):
         session.advance(epoch)
+
+
+def _request(session: MusicSession, device: UUID, ref: str) -> QueueItem:
+    return session.request(item_id=uuid4(), device_id=device, track_ref=ref, title=ref)
+
+
+def test_F003_R005_pedir_pone_la_cancion_al_final_con_su_dispositivo() -> None:
+    session = _open("A")
+    session.events.clear()
+    device = uuid4()
+
+    item = _request(session, device, "yt:BBBBBBBBBBB")
+
+    assert [queued.title for queued in session.pending()] == ["A", "yt:BBBBBBBBBBB"]
+    assert item.requested_by == device
+    assert item.state is QueueItemState.PENDING
+    assert [event.type for event in session.events] == [SessionEventType.QUEUE_CHANGED]
+    assert session.pending_of(device) == [item]
+
+
+def test_F003_R006_con_5_pendientes_lanza_quota_exceeded() -> None:
+    session = _open()
+    device = uuid4()
+    for number in range(QUOTA):
+        _request(session, device, f"yt:{number}")
+    session.events.clear()
+    before = list(session.items)
+
+    with pytest.raises(QuotaExceeded):
+        _request(session, device, "yt:otra")
+
+    # Un pedido rechazado no cambia la cola ni publica nada.
+    assert session.items == before
+    assert session.events == []
+    assert QUOTA == 5
+
+
+def test_F003_R006_el_cupo_es_de_cada_dispositivo() -> None:
+    session = _open()
+    full, other = uuid4(), uuid4()
+    for number in range(QUOTA):
+        _request(session, full, f"yt:{number}")
+
+    item = _request(session, other, "yt:otra")
+
+    assert session.pending_of(other) == [item]
+    assert len(session.pending_of(full)) == QUOTA
+
+
+def test_F003_R007_la_que_suena_se_salta_o_se_descarta_no_cuenta() -> None:
+    session = _open()
+    device = uuid4()
+    items = [_request(session, device, f"yt:{number}") for number in range(QUOTA)]
+
+    # Empieza a sonar la primera: deja de contar y hay cupo para otra.
+    claim = session.claim_player(NOW)
+    assert claim.current is not None and claim.current.item_id == items[0].id
+    assert len(session.pending_of(device)) == QUOTA - 1
+    _request(session, device, "yt:nueva")
+
+    # La que suena se salta: sigue sin contar, y la siguiente que empieza tampoco.
+    session.apply(
+        PlayerEvent(epoch=claim.epoch, item_id=items[0].id, type=PlayerEventType.FAILED),
+        NOW,
+    )
+    assert len(session.pending_of(device)) == QUOTA - 1
+
+    # Al cerrar, las pendientes se descartan y ninguna cuenta.
+    session.close(NOW)
+    assert session.pending_of(device) == []
+
+
+def test_F003_R008_pedir_con_la_sesion_cerrada_lanza_no_open_session() -> None:
+    session = _open("A")
+    session.close(NOW)
+    session.events.clear()
+    before = list(session.items)
+
+    with pytest.raises(NoOpenSession):
+        _request(session, uuid4(), "yt:BBBBBBBBBBB")
+    assert session.items == before
+    assert session.events == []
+
+
+def test_F003_R009_una_pendiente_no_se_puede_volver_a_pedir() -> None:
+    session = _open()
+    first, second = uuid4(), uuid4()
+    _request(session, first, "yt:AAAAAAAAAAA")
+    session.events.clear()
+
+    # Ni otro dispositivo ni el mismo: ya está pendiente.
+    for device in (second, first):
+        with pytest.raises(AlreadyQueued):
+            _request(session, device, "yt:AAAAAAAAAAA")
+
+    # El rechazo no gasta cupo ni cambia la cola.
+    assert session.pending_of(second) == []
+    assert len(session.pending()) == 1
+    assert session.events == []
+
+    # Con el cupo lleno, el aviso es que ya está en la cola: esperar a tener cupo no
+    # serviría de nada.
+    for number in range(QUOTA - 1):
+        _request(session, first, f"yt:{number}")
+    assert len(session.pending_of(first)) == QUOTA
+    with pytest.raises(AlreadyQueued):
+        _request(session, first, "yt:AAAAAAAAAAA")
+
+
+def test_F003_R009_una_que_ya_sono_si_se_puede_pedir() -> None:
+    session = _open()
+    device = uuid4()
+    played = _request(session, device, "yt:AAAAAAAAAAA")
+    claim = session.claim_player(NOW)
+    session.apply(
+        PlayerEvent(epoch=claim.epoch, item_id=played.id, type=PlayerEventType.ENDED), NOW
+    )
+    assert played.state is QueueItemState.PLAYED
+
+    again = _request(session, device, "yt:AAAAAAAAAAA")
+
+    assert again.state is QueueItemState.PENDING
+    assert again.id != played.id
+
+
+def test_F003_R005_la_herramienta_de_desarrollo_agrega_sin_dispositivo() -> None:
+    session = _open()
+
+    item = session.enqueue(item_id=uuid4(), track_ref="fake:3s", title="Canción")
+
+    assert item.requested_by is None

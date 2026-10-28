@@ -23,21 +23,33 @@ from app.accounts.infrastructure.argon2_hasher import Argon2PasswordHasher
 from app.accounts.infrastructure.policy_files import FilePolicyStore
 from app.accounts.infrastructure.qr_image import SegnoQrImageRenderer
 from app.accounts.infrastructure.repositories import SqlAccountsUnitOfWork
-from app.accounts.interface import EstablishmentByPublicCode, ResolveOwner
-from app.sessions.api import music_session, player, realtime
+from app.accounts.interface import (
+    EstablishmentByPublicCode,
+    EstablishmentIdByPublicCode,
+    ResolveOwner,
+)
+from app.catalog.domain.catalog import MusicCatalog
+from app.catalog.infrastructure.cache import RedisCatalogCache
+from app.catalog.infrastructure.fake import FakeCatalog
+from app.catalog.infrastructure.youtube import YouTubeCatalog
+from app.catalog.interface import SearchTracks, TrackLookup
+from app.sessions.api import client, music_session, player, realtime
 from app.sessions.application.advance_player import AdvancePlayer
 from app.sessions.application.claim_player import ClaimPlayer
+from app.sessions.application.client_view import ClientView
 from app.sessions.application.close_session import CloseMusicSession
 from app.sessions.application.get_session import GetMusicSession
 from app.sessions.application.heartbeat import PlayerHeartbeat
 from app.sessions.application.open_session import OpenMusicSession
 from app.sessions.application.report_player_event import ReportPlayerEvent
+from app.sessions.application.request_track import RequestTrack
 from app.sessions.infrastructure.redis_publisher import RedisEventPublisher
 from app.sessions.infrastructure.repositories import SqlSessionsUnitOfWork
 from app.shared.clock import SystemClock
 from app.shared.config import Settings, get_settings
 from app.shared.csrf import CsrfMiddleware, HstsMiddleware
 from app.shared.db import Database
+from app.shared.device_token import DeviceTokens
 from app.shared.realtime_ticket import RealtimeTicketIssuer
 
 health_router = APIRouter()
@@ -74,11 +86,20 @@ def create_app(
     db = Database.from_url(settings.database_url, role="app_api")
     # Eventos de la sesión de música hacia el tiempo real (plan D6 de la feature 002).
     publisher = RedisEventPublisher.from_url(settings.redis_url)
+    # Catálogo de música (feature 003, plan D1, D2, D8).
+    youtube = (
+        YouTubeCatalog(settings.youtube_api_key) if settings.catalog_provider == "youtube" else None
+    )
+    catalog: MusicCatalog = youtube or FakeCatalog()
+    catalog_cache = RedisCatalogCache.from_url(settings.redis_url)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
         await publisher.aclose()
+        await catalog_cache.aclose()
+        if youtube is not None:
+            await youtube.aclose()
         await db.dispose()
 
     app = FastAPI(title="MyPlaylist API", lifespan=lifespan)
@@ -96,6 +117,9 @@ def create_app(
     app.state.logout_owner = LogoutOwner(unit_of_work=unit_of_work, clock=clock)
     app.state.resolve_owner = ResolveOwner(unit_of_work=unit_of_work, clock=clock)
     app.state.establishment_by_public_code = EstablishmentByPublicCode(unit_of_work=unit_of_work)
+    app.state.establishment_id_by_public_code = EstablishmentIdByPublicCode(
+        unit_of_work=unit_of_work
+    )
     app.state.verify_email = VerifyEmail(unit_of_work=unit_of_work, clock=clock)
     app.state.get_owner_profile = GetOwnerProfile(unit_of_work=unit_of_work)
     app.state.get_qr = GetQr(
@@ -137,7 +161,19 @@ def create_app(
     app.state.report_player_event = ReportPlayerEvent(
         unit_of_work=sessions, publisher=publisher, clock=clock
     )
+    # El cliente que pide canciones desde el QR (feature 003).
+    track_lookup = TrackLookup(catalog=catalog)
+    app.state.search_tracks = SearchTracks(catalog=catalog, cache=catalog_cache)
+    app.state.track_lookup = track_lookup
+    app.state.request_track = RequestTrack(
+        unit_of_work=sessions, publisher=publisher, lookup=track_lookup
+    )
+    app.state.client_view = ClientView(unit_of_work=sessions)
+    app.state.device_tokens = DeviceTokens(secret=settings.device_token_secret, clock=clock)
     app.include_router(health_router, prefix="/api")
+    # Antes que `public`: su ruta `/public/establishments/{code:path}` atraparía también
+    # las del cliente, `…/{code}/music` (feature 003, plan D5).
+    app.include_router(client.router, prefix="/api")
     app.include_router(public.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
     app.include_router(owner.router, prefix="/api")

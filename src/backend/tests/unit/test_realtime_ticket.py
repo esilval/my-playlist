@@ -81,6 +81,9 @@ def test_F002_R013_produccion_no_arranca_sin_secreto_propio() -> None:
             email_backend="ses",
             data_policy_version="2026-10",
             realtime_ticket_secret=secret,
+            catalog_provider="youtube",
+            youtube_api_key="clave-de-produccion-de-pruebas",
+            device_token_secret="secreto-de-produccion-de-al-menos-32-caracteres",
         )
 
     for secret in (LOCAL_REALTIME_TICKET_SECRET, "", "corto"):

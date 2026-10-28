@@ -12,7 +12,8 @@
 // para un ticket legítimo; solo rechaza antes uno fabricado.
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export type TicketRole = "owner" | "player";
+// `client` es el cliente que pide canciones desde el QR (feature 003, plan D6).
+export type TicketRole = "owner" | "player" | "client";
 export type InvalidReason = "signature" | "malformed" | "expired";
 
 export class InvalidTicket extends Error {
@@ -29,7 +30,7 @@ export interface TicketClaims {
   ticketId: string;
 }
 
-const ROLES: ReadonlySet<string> = new Set(["owner", "player"]);
+const ROLES: ReadonlySet<string> = new Set(["owner", "player", "client"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function signature(secret: string, segment: string): string {

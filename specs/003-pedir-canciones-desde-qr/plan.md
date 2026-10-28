@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-10-27         |
-| Estado | Approved · dd1145be5931              |
+| Estado | Approved · 2d02b8f0ef19              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -80,12 +80,14 @@ La feature amplía la página del QR (C5) con un buscador y los pedidos del clie
     - `search` usa `search.list` con `type=video`, `videoEmbeddable=true`, `part=snippet` y `maxResults=10`. El filtro de inserción cubre R004.
     - `lookup` usa `videos.list` con `part=snippet,status` y comprueba `status.embeddable`. Una canción que no se puede insertar, o que no existe, da `None`.
     - Normaliza el título y el canal (`snippet.title` y `snippet.channelTitle`, que vienen con entidades HTML) y forma la referencia `yt:<videoId>`, el mismo formato que entiende el adaptador del reproductor (feature 002, D5).
-    - Cada llamada espera como mucho 1,5 s, dentro de los 2 s de Q1.
+    - Cada llamada espera como mucho 1,5 s en total, dentro de los 2 s de Q1. La espera de `httpx2` es por fase, así que el tope total va aparte.
+    - La clave viaja en la cabecera `X-Goog-Api-Key`, no en la URL, y el adaptador sube a WARNING los loggers de `httpx2` y `httpcore2`. Así ni la clave ni el texto buscado aparecen en ningún registro de peticiones (constitución, «Nada sensible en logs»).
   - **Adaptador falso** (`FakeCatalog`), para desarrollo, e2e y carga. Devuelve resultados deterministas con referencias `fake:…` que entiende el proveedor de reproducción falso:
-    - por defecto, cinco canciones `«<texto> 1»`…`«<texto> 5»` con `fake:3s`;
+    - por defecto, cinco canciones con la referencia `fake:<slug>-<n>` y el título «Canción n de <slug>», donde `<slug>` es el texto sin tildes y en minúsculas. Cada referencia es distinta, para que R009 no las tome por duplicadas, y el proveedor de reproducción falso las reproduce 3 s. El título sale de la referencia, así que la búsqueda y la consulta coinciden;
     - con el texto `error`, una que falla al sonar (`fake:error`);
     - con el texto `caído`, `CatalogUnavailable`, para R012;
-    - con el texto `nada`, ningún resultado.
+    - con el texto `nada`, ningún resultado;
+    - con el texto `retirada`, cinco canciones que al consultarlas ya no existen, para R014.
 
     No se puede usar con `ENV=production`.
   - **Texto de búsqueda:** se recortan los espacios. Vacío o de más de 100 caracteres, la API responde `422`.
@@ -102,13 +104,14 @@ La feature amplía la página del QR (C5) con un buscador y los pedidos del clie
   - **Caché de búsquedas:**
     - Va en la clave `est:{establishment_id}:catalog:search:<sha256 del texto normalizado>`, con los resultados en JSON y una caducidad de 24 h.
     - El texto se normaliza a minúsculas, sin tildes y con los espacios colapsados.
-    - Cada resultado se guarda también en `est:{id}:catalog:track:<ref>`, con la misma caducidad. Así `TrackLookup` no gasta cuota cuando el cliente pide una canción que acaba de ver.
+    - Las canciones sueltas no se guardan: `TrackLookup` pregunta siempre al proveedor, con `videos.list`, que cuesta 1 unidad de cuota. Así una canción que deja de existir o de poder reproducirse después de aparecer en una búsqueda se rechaza al pedirla (R014).
   - **Límite por dispositivo (R013):**
     - Un contador `est:{id}:search-rate:{device_id}` con `INCR` y una caducidad de 60 s desde la primera búsqueda.
     - Con más de 10 búsquedas, se responde `429 too_many_searches` con la cabecera `Retry-After`.
     - Una búsqueda servida desde la caché también cuenta.
   - **Si Redis no responde:** la búsqueda va directa al proveedor y el límite no se aplica. Ninguno de los dos es un dato de negocio, y la búsqueda no se rompe por la caché. El fallo queda en el log.
 - **Alternativas descartadas:**
+  - **Guardar también cada canción de una búsqueda, para que `TrackLookup` no gaste cuota:** una canción retirada después de la búsqueda se aceptaría durante 24 h, contra R014. Ahorraría 1 unidad por pedido, frente a las 100 de una búsqueda.
   - **Una caché global, compartida entre establecimientos:** ahorraría más cuota, porque muchos locales buscan lo mismo. Pero S8 exige el prefijo de establecimiento en toda clave de Redis. Si la cuota no da, se propone cambiar S8 para la caché del catálogo, que no guarda datos de ningún establecimiento.
   - **El límite en PostgreSQL, como los intentos de inicio de sesión:** cada búsqueda escribiría en la base, lo que no tiene sentido para un contador de un minuto.
 - **Consecuencias:** la caché se calienta por establecimiento, así que la cuota que se ahorra depende de cuánto se repitan las búsquedas en cada local. Se medirá en el piloto.
@@ -142,7 +145,7 @@ La feature amplía la página del QR (C5) con un buscador y los pedidos del clie
 - **Contexto:** la canción va al final de la cola (R005). El cupo es de 5 pendientes por dispositivo (R006) y se recupera cuando una de ellas empieza a sonar, se salta o se descarta (R007). Con la sesión cerrada no se pide (R008), y una canción pendiente no se repite (R009). La cola solo la cambia C2 (S2), con las reglas en transacción (ADR-0004).
 - **Decisión:**
   - **Modelo:** `queue_item` gana `requested_by uuid NULL`, el identificador del dispositivo que la pidió. Es `NULL` para las canciones de la herramienta de desarrollo y, más adelante, del propietario (B05).
-  - **Dominio:** `MusicSession.request(item_id, device_id, track)`, con `QUOTA = 5` como constante (B10 la hará configurable por plan). Lanza:
+  - **Dominio:** `MusicSession.request(item_id, device_id, track_ref, title)`, con el título ya resuelto por C3, y con `QUOTA = 5` como constante (B10 la hará configurable por plan). Lanza:
     - `NoOpenSession` (R008);
     - `AlreadyQueued`, si hay una canción `pending` con la misma `track_ref`, la pidiera quien la pidiera (R009);
     - `QuotaExceeded`, si el dispositivo tiene 5 canciones en `pending` (R006).
@@ -150,6 +153,7 @@ La feature amplía la página del QR (C5) con un buscador y los pedidos del clie
     Si pasa, llama a `enqueue` con `requested_by`, que la pone al final y publica `queue.changed`.
   - **El cupo se cuenta, no se guarda:** son las canciones en `pending` con ese `requested_by`. Cuando una pasa a `playing`, `skipped` o `discarded` deja de contar sola (R007), sin ningún contador que mantener.
   - **Caso de uso `RequestTrack(establishment_id, device_id, ref)`:**
+    0. Con una lectura sin bloqueo, si la sesión está cerrada lanza `NoOpenSession` antes de consultar a C3: el cliente ve el aviso de R008 y no se gasta cuota.
     1. Obtiene el título con `TrackLookup` de C3, fuera de la transacción. Si da `None`, porque la canción ya no existe o no se puede reproducir, lanza `UnknownTrack` sin tocar la cola ni el cupo (R014).
     2. Con la sesión bloqueada, aplica `request`.
     3. Publica `queue.changed` tras el commit, como `EnqueueTrack`.
@@ -165,7 +169,9 @@ La feature amplía la página del QR (C5) con un buscador y los pedidos del clie
 - **Contexto:** C5 busca, pide y ve su estado por la API del monolito (S6). Las rutas no piden la sesión del propietario. El establecimiento sale del código del QR.
 - **Decisión:**
   - **Prefijo:** `/api/public/establishments/{code}/`. Es el que limita la cookie (D3).
-  - **Establecimiento:** se resuelve con `EstablishmentByPublicCode` de C1. Un código que no existe da `404 not_found` sin más detalle (feature 001, R013).
+  - **Establecimiento:** se resuelve con `EstablishmentIdByPublicCode`, una interfaz nueva de C1 sobre una función `SECURITY DEFINER` nueva, `public_establishment_id(código)`, que solo devuelve el identificador. Sin sesión iniciada, RLS no deja leer `establishment`. La función de la feature 001, `public_establishment`, sigue devolviendo solo el nombre. Un código que no existe o está mal formado da `404 not_found` sin más detalle (feature 001, R013).
+  - **Orden de los routers:** el router del cliente se incluye antes que el de la página pública. Su ruta `/public/establishments/{code:path}` atraparía si no `…/{code}/music`.
+  - **Referencia del pedido:** como mucho 64 caracteres. Más larga da `422` antes de consultar al catálogo.
   - **Rutas:** las que fija la tabla de Contratos: el estado, la búsqueda, el pedido y el ticket de tiempo real.
   - **CSRF:** las peticiones POST exigen la cabecera `X-MyPlaylist-Client`, como el resto de la API (constitución).
   - **Errores:** todos con `{error: "<código>"}`. La SPA traduce cada código al aviso que piden R006, R008, R009, R012 y R013.
@@ -243,7 +249,8 @@ La feature amplía la página del QR (C5) con un buscador y los pedidos del clie
 
 | Componente | Cambio | Requisitos que cubre |
 | ---------- | ------ | -------------------- |
-| `src/backend/app/catalog/` | Módulo nuevo (C3): puerto `MusicCatalog`, adaptadores `YouTubeCatalog` y `FakeCatalog`, caché y límite en Redis, `SearchTracks` y `TrackLookup` | R003, R004, R012, R013 |
+| `src/backend/app/catalog/` | Módulo nuevo (C3): puerto `MusicCatalog`, adaptadores `YouTubeCatalog` y `FakeCatalog`, caché y límite en Redis, `SearchTracks` y `TrackLookup` | R003, R004, R012, R013, R014 |
+| `src/backend/app/accounts/` y `migrations/versions/0004_public_establishment_id.py` | `EstablishmentIdByPublicCode` y la función `SECURITY DEFINER` `public_establishment_id` | R001, R011 |
 | `src/backend/app/sessions/domain/` | `MusicSession.request` con cupo y duplicadas; `requested_by` en `QueueItem` | R005, R006, R007, R008, R009 |
 | `src/backend/app/sessions/application/` | Casos de uso `RequestTrack` y `ClientView` | R005, R006, R007, R008, R009, R010, R014 |
 | `src/backend/app/sessions/api/client.py` | Rutas públicas del cliente bajo `/api/public/establishments/{code}/`; resuelven el código con C1, buscan con C3 y piden y consultan con C2 | R001, R002, R003, R005, R006, R008, R009, R010, R011, R012, R013, R014 |
@@ -260,9 +267,9 @@ La feature amplía la página del QR (C5) con un buscador y los pedidos del clie
 - **`queue_item`:** columna nueva `requested_by uuid NULL`.
   - Índice parcial `(session_id, requested_by) WHERE state = 'pending'`.
   - Hereda la política RLS de la tabla y los permisos de `app_api`.
-- **Migración:** `0003_queue_requests`, reversible.
+- **Migraciones:** `0003_queue_requests` y `0004_public_establishment_id` (la función que resuelve el código público, D5), las dos reversibles.
 - **Redis** (no es fuente de verdad, S10):
-  - `est:{id}:catalog:search:<hash>` y `est:{id}:catalog:track:<ref>`, con caducidad de 24 h;
+  - `est:{id}:catalog:search:<hash>`, con caducidad de 24 h;
   - `est:{id}:search-rate:{device}`, con caducidad de 60 s.
 - **No se guarda** el texto de las búsquedas en PostgreSQL ni ningún otro dato del cliente.
 
@@ -287,7 +294,9 @@ Las dos lanzan `CatalogUnavailable`, y `SearchTracks` también `SearchRateExceed
 - `RequestTrack(establishment_id, device_id, ref) -> ClientState`;
 - `ClientView(establishment_id, device_id) -> ClientState`.
 
-`RequestTrack` lanza `NoOpenSession`, `QuotaExceeded`, `AlreadyQueued` o `UnknownTrack`.
+`RequestTrack` lanza `NoOpenSession`, `QuotaExceeded`, `AlreadyQueued`, `UnknownTrack` o `CatalogUnavailable`.
+
+**Interfaz de C1** (`app/accounts/interface.py`), que se amplía: `EstablishmentIdByPublicCode(public_code) -> UUID | None`.
 
 **Ticket de tiempo real:** el campo `role` admite `client` (ADR-0014). Los eventos no cambian.
 
@@ -350,7 +359,7 @@ erDiagram
 ```mermaid
 classDiagram
   class MusicSession {
-    +request(item_id, device_id, track) QueueItem
+    +request(item_id, device_id, track_ref, title) QueueItem
     +enqueue(item_id, track_ref, title, requested_by) QueueItem
     +pending_of(device_id) list~QueueItem~
   }
@@ -370,10 +379,13 @@ classDiagram
   }
   class YouTubeCatalog
   class FakeCatalog
-  class CachedCatalog {
-    +search(establishment_id, query)
-    +lookup(establishment_id, ref)
+  class CatalogCache {
+    <<puerto>>
+    +search(establishment_id, query_key)
+    +store_search(establishment_id, query_key, tracks)
+    +count_search(establishment_id, device_id)
   }
+  class RedisCatalogCache
   class SearchTracks {
     +call(establishment_id, device_id, query) list~CatalogTrack~
   }
@@ -385,9 +397,10 @@ classDiagram
   MusicSession "1" o-- "*" QueueItem
   YouTubeCatalog ..|> MusicCatalog
   FakeCatalog ..|> MusicCatalog
-  CachedCatalog --> MusicCatalog
-  SearchTracks --> CachedCatalog
-  TrackLookup --> CachedCatalog
+  RedisCatalogCache ..|> CatalogCache
+  SearchTracks --> CatalogCache
+  SearchTracks --> MusicCatalog
+  TrackLookup --> MusicCatalog
   RequestTrack --> TrackLookup
   RequestTrack --> MusicSession
   ClientView --> MusicSession
@@ -410,7 +423,7 @@ classDiagram
 | R011 | integración en la batería de aislamiento (la cookie de A no vale en las rutas de B: en B es un dispositivo nuevo; un pedido con la cookie de A no cambia la cola de A ni la de B; nadie ve los pedidos de otro dispositivo) y servicio de tiempo real (un ticket `client` de A no se une a la sala de B) | `src/backend/tests/integration/test_isolation.py`, `src/realtime/test/rooms.test.ts` |
 | R012 | unitaria (el adaptador lanza `CatalogUnavailable` ante un 5xx, un 403 de cuota o una espera agotada), integración (`503 search_unavailable` con el catálogo falso, sin cambiar la cola) y componente (aviso) | `test_youtube_catalog.py`, `test_client_music.py`, `PublicEstablishment.test.tsx` |
 | R013 | integración (la búsqueda 11 en un minuto da `429` con `Retry-After`; sin Redis, la búsqueda sigue) | `test_client_music.py` |
-| R014 | integración (`RequestTrack` con una referencia que el catálogo ya no reconoce lanza `UnknownTrack`; `POST requests` da `422 unknown_track` sin cambiar la cola ni el cupo) y componente (aviso de canción no disponible) | `src/backend/tests/integration/test_request_track.py`, `test_client_music.py`, `PublicEstablishment.test.tsx` |
+| R014 | integración (`RequestTrack` con una referencia que el catálogo ya no reconoce lanza `UnknownTrack`; `POST requests` da `422 unknown_track` sin cambiar la cola ni el cupo) y componente (aviso de canción no disponible) | `src/backend/tests/integration/{test_catalog_cache.py,test_request_track.py}`, `test_client_music.py`, `PublicEstablishment.test.tsx` |
 
 **Requisitos no funcionales:**
 - **Q1 y Q2:** `src/perf/client.js`, con k6 y el catálogo falso (D10).
@@ -439,3 +452,19 @@ La enmienda de la spec del 2026-10-27, tras `/sdd:analyze`, se cubre así:
 La misma pasada corrige la firma de `SearchTracks`, que recibe el dispositivo para el límite de R013, y alinea la medida de Q4 con el e2e.
 
 La pregunta abierta de la spec, si el límite de R013 sigue en 10 búsquedas por minuto, no afecta al diseño: el límite es una constante del catálogo y se ajusta tras medir el piloto.
+
+La enmienda del 2026-10-27, durante la implementación de T004 y T005, cambia:
+- **D2:** `TrackLookup` pregunta siempre al proveedor y no se guardan canciones sueltas en la caché. Así R014 se cumple aunque la canción haya aparecido en una búsqueda reciente. La eligió el usuario frente a una caché de canciones corta o a aceptar un desfase de 24 h.
+- **D1:** el formato real del catálogo falso, con el texto `retirada`, la clave de YouTube en una cabecera y los loggers del cliente HTTP en WARNING.
+- **D4:** la firma de `request`, que recibe el título ya resuelto.
+- **Diagrama de clases y modelo de datos:** quedan como el código.
+
+No introduce requisitos.
+
+La enmienda del 2026-10-27, durante la implementación de T006 a T008, añade:
+- **D5:** el establecimiento se resuelve con una función `SECURITY DEFINER` nueva, que solo devuelve el identificador (tarea T016). La eligió el usuario frente a ampliar la función de la feature 001. También fija el orden de los routers y el límite de la referencia.
+- **D4:** la lectura previa que rechaza con la sesión cerrada antes de consultar el catálogo.
+- **Contratos:** `CatalogUnavailable` en `RequestTrack` y la interfaz nueva de C1.
+- **Componentes, modelo de datos y pruebas:** las citas de R014 y de la migración nueva.
+
+No introduce requisitos.

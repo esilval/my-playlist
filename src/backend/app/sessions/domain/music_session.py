@@ -24,6 +24,10 @@ PLAYER_ACTIVE_WINDOW = timedelta(seconds=45)
 # Motivo que se guarda cuando el reproductor informa de un fallo sin decir cuál.
 UNKNOWN_FAILURE = "unknown"
 
+# Canciones pendientes a la vez por dispositivo (feature 003, R006). B10 lo hará
+# configurable según el plan del establecimiento.
+QUOTA = 5
+
 
 class NoOpenSession(Exception):
     """El establecimiento no tiene una sesión de música abierta (R009, R011)."""
@@ -32,6 +36,15 @@ class NoOpenSession(Exception):
 class PlayerSuperseded(Exception):
     """El informe o el latido llega de una época vieja: otro reproductor tomó el
     control (R010)."""
+
+
+class AlreadyQueued(Exception):
+    """La canción ya está pendiente en la cola, la pidiera quien la pidiera (feature 003,
+    R009)."""
+
+
+class QuotaExceeded(Exception):
+    """El dispositivo ya tiene QUOTA canciones pendientes (feature 003, R006)."""
 
 
 class QueueItemNotFound(Exception):
@@ -144,17 +157,45 @@ class MusicSession:
         self._changed(SessionEventType.SESSION_CLOSED)
         return True
 
-    def enqueue(self, *, item_id: UUID, track_ref: str, title: str) -> QueueItem:
-        """Agrega una canción al final de la cola (R008). La agregarán los clientes (B03)
-        y el propietario (B05); en esta feature, solo la herramienta de desarrollo."""
+    def enqueue(
+        self, *, item_id: UUID, track_ref: str, title: str, requested_by: UUID | None = None
+    ) -> QueueItem:
+        """Agrega una canción al final de la cola (R008). La agregan los clientes con
+        `request` (feature 003), la herramienta de desarrollo y, más adelante, el
+        propietario (B05)."""
         self._require_open()
         if not track_ref.strip() or not title.strip():
             raise ValueError("una canción de la cola lleva referencia y título")
         position = max((item.position for item in self.items), default=0) + 1
-        item = QueueItem(id=item_id, position=position, track_ref=track_ref, title=title)
+        item = QueueItem(
+            id=item_id,
+            position=position,
+            track_ref=track_ref,
+            title=title,
+            requested_by=requested_by,
+        )
         self.items.append(item)
         self._changed(SessionEventType.QUEUE_CHANGED)
         return item
+
+    def pending_of(self, device_id: UUID) -> list[QueueItem]:
+        """Las pendientes que pidió el dispositivo, en el orden en que sonarán. Son las
+        que cuentan en su cupo: una que empieza a sonar, se salta o se descarta deja de
+        contar sola (feature 003, R007)."""
+        return [item for item in self.pending() if item.requested_by == device_id]
+
+    def request(self, *, item_id: UUID, device_id: UUID, track_ref: str, title: str) -> QueueItem:
+        """El pedido de un cliente (feature 003, plan D4): la canción va al final de la
+        cola si la sesión está abierta (R008), no está ya pendiente (R009) y el dispositivo
+        tiene cupo (R006). Un pedido rechazado no cambia nada."""
+        self._require_open()
+        if any(item.track_ref == track_ref for item in self.pending()):
+            raise AlreadyQueued
+        if len(self.pending_of(device_id)) >= QUOTA:
+            raise QuotaExceeded
+        return self.enqueue(
+            item_id=item_id, track_ref=track_ref, title=title, requested_by=device_id
+        )
 
     def claim_player(self, now: datetime) -> PlayerClaim:
         """Pone en marcha un reproductor y lo hace el único activo (R004, R010).

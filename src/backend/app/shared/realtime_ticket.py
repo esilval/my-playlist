@@ -32,6 +32,8 @@ TICKET_TTL = timedelta(seconds=60)
 class TicketRole(StrEnum):
     OWNER = "owner"
     PLAYER = "player"
+    # El cliente que pide canciones desde el QR (feature 003, plan D6).
+    CLIENT = "client"
 
 
 class InvalidTicket(Exception):

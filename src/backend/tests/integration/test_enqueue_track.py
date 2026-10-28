@@ -129,6 +129,11 @@ def test_F002_R008_devtools_se_niega_con_env_production(database_url: str) -> No
         email_backend="ses",
         data_policy_version="2026-10",
         realtime_ticket_secret="secreto-de-produccion-de-al-menos-32-caracteres",
+        # Producción también exige el catálogo de YouTube y su clave, y el secreto propio
+        # del dispositivo (feature 003, plan D8).
+        catalog_provider="youtube",
+        youtube_api_key="clave-de-produccion-de-pruebas",
+        device_token_secret="secreto-de-produccion-de-al-menos-32-caracteres",
     )
 
     code = devtools.main(

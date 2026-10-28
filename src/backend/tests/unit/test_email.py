@@ -81,5 +81,10 @@ def test_produccion_exige_ses() -> None:
         data_policy_version="2026-10",
         # Producción también exige el secreto propio del tiempo real (feature 002, ADR-0014).
         realtime_ticket_secret="secreto-de-produccion-de-al-menos-32-caracteres",
+        # Producción también exige el catálogo de YouTube y su clave, y el secreto propio
+        # del dispositivo (feature 003, plan D8).
+        catalog_provider="youtube",
+        youtube_api_key="clave-de-produccion-de-pruebas",
+        device_token_secret="secreto-de-produccion-de-al-menos-32-caracteres",
     )
     assert settings.email_backend == "ses"

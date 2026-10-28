@@ -60,6 +60,13 @@ services:
       # Eventos de la sesión de música hacia `realtime` (feature 002, plan D6).
       REDIS_URL: redis://redis:6379/0
       REALTIME_TICKET_SECRET: *realtime-ticket-secret
+      # Catálogo de música (feature 003, plan D8): el falso por defecto, que entiende el
+      # reproductor falso. Con YouTube real: CATALOG_PROVIDER=youtube y YOUTUBE_API_KEY.
+      CATALOG_PROVIDER: ${CATALOG_PROVIDER:-fake}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+      # Firma de la cookie del dispositivo del cliente (feature 003, plan D3). Solo lo
+      # usa el monolito; el valor de desarrollo no sirve en producción.
+      DEVICE_TOKEN_SECRET: ${DEVICE_TOKEN_SECRET:-solo-para-desarrollo-local-dispositivo-no-usar-en-produccion}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
