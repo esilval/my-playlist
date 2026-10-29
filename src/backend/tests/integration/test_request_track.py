@@ -18,7 +18,9 @@ from app.accounts.interface import OwnerContext
 from app.catalog.infrastructure.fake import FakeCatalog
 from app.catalog.interface import TrackLookup
 from app.sessions.application.claim_player import ClaimPlayer
+from app.sessions.application.client_view import client_state
 from app.sessions.application.close_session import CloseMusicSession
+from app.sessions.application.enqueue_track import EnqueueTrack
 from app.sessions.application.open_session import OpenMusicSession
 from app.sessions.application.report_player_event import ReportPlayerEvent
 from app.sessions.domain.music_session import QUOTA, MusicSession, PlayerEvent, PlayerEventType
@@ -355,3 +357,63 @@ async def test_F003_R008_request_track_con_la_sesion_cerrada_lanza_no_open_sessi
     with pytest.raises(CatalogUnavailable):
         await request(ctx.establishment, device, "fake:rock-1")
     assert unavailable.lookups == 1
+
+
+async def _playing(ctx: Ctx) -> uuid.UUID:
+    [row] = await _rows(ctx, "SELECT id FROM queue_item WHERE state = 'playing'")
+    playing: uuid.UUID = row["id"]
+    return playing
+
+
+async def test_F003_R010_la_lectura_del_cliente_da_lo_mismo_que_pending_of(ctx: Ctx) -> None:
+    # La lectura propia de ClientView (plan D4) no carga la sesión entera: tiene que dar lo
+    # mismo que las reglas del dominio sobre la sesión completa.
+    device, other, idle = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    await ctx.open(ctx.owner)
+    await ctx.request(ctx.establishment, device, "fake:rock-1")  # sonará y terminará
+    await ctx.request(ctx.establishment, device, "fake:rock-2")  # se saltará
+    await ctx.request(ctx.establishment, other, "fake:rock-3")  # quedará sonando
+    await ctx.request(ctx.establishment, device, "fake:rock-4")
+    enqueue = EnqueueTrack(unit_of_work=ctx.unit_of_work, publisher=ctx.publisher)
+    await enqueue(ctx.establishment, "fake:dev-1", "De la herramienta")  # sin dispositivo
+    await ctx.request(ctx.establishment, other, "fake:rock-5")
+    await ctx.request(ctx.establishment, device, "fake:rock-6")
+    claim = await ctx.claim(ctx.owner)
+    # La primera suena y termina; la segunda empieza y falla; suena la tercera.
+    for finish in (PlayerEventType.ENDED, PlayerEventType.FAILED):
+        item_id = await _playing(ctx)
+        for event in (PlayerEventType.STARTED, finish):
+            await ctx.report(ctx.owner, PlayerEvent(epoch=claim.epoch, item_id=item_id, type=event))
+    states = await _rows(ctx, "SELECT title, state FROM queue_item ORDER BY position")
+    assert [row["state"] for row in states] == [
+        "played",
+        "skipped",
+        "playing",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+    ]
+
+    async with ctx.unit_of_work(ctx.establishment) as sessions:
+        full = await sessions.open_session(lock=False)
+    for who in (device, other, idle):
+        assert await ctx.view(ctx.establishment, who) == client_state(full, who)
+        async with ctx.unit_of_work(ctx.establishment) as sessions:
+            partial = await sessions.client_snapshot(who)
+        # Solo trae la que suena y las pendientes de ese dispositivo.
+        assert partial is not None and full is not None
+        assert [item.id for item in partial.items] == [
+            item.id
+            for item in full.items
+            if item.state.value == "playing" or item in full.pending_of(who)
+        ]
+
+    mine = await ctx.view(ctx.establishment, device)
+    assert mine.now_playing == "Canción 3 de rock"
+    assert [track.title for track in mine.mine] == ["Canción 4 de rock", "Canción 6 de rock"]
+    assert mine.quota_free == QUOTA - 2
+    # Cerrada, la lectura no trae nada.
+    await ctx.close(ctx.owner)
+    async with ctx.unit_of_work(ctx.establishment) as sessions:
+        assert await sessions.client_snapshot(device) is None

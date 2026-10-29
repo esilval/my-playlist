@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from app.sessions.domain.music_session import QUOTA, MusicSession
-from app.sessions.domain.ports import SessionsUnitOfWork
+from app.sessions.domain.ports import ClientReadUnitOfWork
 
 
 @dataclass(frozen=True)
@@ -47,11 +47,11 @@ def client_state(session: MusicSession | None, device_id: UUID) -> ClientState:
 
 @dataclass(frozen=True)
 class ClientView:
-    unit_of_work: SessionsUnitOfWork
+    unit_of_work: ClientReadUnitOfWork
 
     async def __call__(self, establishment_id: UUID, device_id: UUID) -> ClientState:
-        # Sin bloquear: es una consulta, y la piden todos los clientes conectados con cada
-        # cambio de la cola (plan D6).
+        # La piden todos los clientes conectados con cada cambio de la cola (plan D6), y la
+        # búsqueda: lee sin bloquear y solo lo que se muestra, no la cola entera (D4).
         async with self.unit_of_work(establishment_id) as sessions:
-            session = await sessions.open_session(lock=False)
+            session = await sessions.client_snapshot(device_id)
         return client_state(session, device_id)

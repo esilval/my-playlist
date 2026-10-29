@@ -16,6 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 
 DbRole = Literal["app_api", "app_worker"]
 
+# Pool fijo por proceso (plan D11 de la feature 003): sin desborde, las conexiones se abren
+# una vez y se reutilizan. Con desborde, cada pico abría y cerraba conexiones, y cada una
+# nueva repetía la consulta con que asyncpg averigua los tipos propios de la base. Con 4
+# procesos de la API (ADR-0015), el trabajador y la herramienta de desarrollo son como
+# mucho 90 de las 100 conexiones de PostgreSQL en local.
+POOL_SIZE = 15
+
 
 async def set_establishment(connection: AsyncConnection, establishment_id: UUID) -> None:
     """Fija el establecimiento de la transacción en curso.
@@ -36,7 +43,8 @@ class Database:
 
     @classmethod
     def from_url(cls, url: str, role: DbRole) -> "Database":
-        return cls(create_async_engine(url), role)
+        engine = create_async_engine(url, pool_size=POOL_SIZE, max_overflow=0, pool_pre_ping=True)
+        return cls(engine, role)
 
     @asynccontextmanager
     async def transaction(

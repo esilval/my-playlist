@@ -47,8 +47,12 @@ services:
 
   api:
     build: ./backend
-    # Migra al arrancar: en local la base vive en el volumen de este compose.
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    # Migra al arrancar, una sola vez: en local la base vive en el volumen de este compose.
+    # Después arranca API_WORKERS procesos de uvicorn (ADR-0015). Cada uno abre su pool, fijo
+    # de 15 conexiones y sin desborde (app/shared/db.py, plan D11 de 003). Con 4 procesos, el
+    # trabajador y la herramienta de desarrollo son como mucho 90 de las 100 de
+    # PostgreSQL: en local, API_WORKERS no debe pasar de 4.
+    command: sh -c "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-4}"
     environment: &backend-env
       ENV: local
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-myplaylist}

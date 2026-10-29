@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-10-27         |
-| Estado | Approved · 2d02b8f0ef19              |
+| Estado | Approved · d253151b7386              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -54,6 +54,7 @@ La feature amplía la página del QR (C5) con un buscador y los pedidos del clie
 | ADR-0010 — YouTube como única plataforma del piloto | C3 usa la YouTube Data API v3 desde el monolito, con caché en Redis y detrás del puerto `MusicCatalog` (D1). La referencia `yt:<id>` es la misma que entiende el adaptador del reproductor (feature 002, D5). |
 | ADR-0013 — Código bajo `src/` | Ver P8. |
 | ADR-0014 — Ticket de tiempo real | Se añade el tipo `client`, que pide la ruta pública del establecimiento con la cookie del dispositivo (D6). |
+| ADR-0015 — La API corre con varios procesos | El compose arranca la API con 4 procesos de uvicorn, y la prueba de carga se mide así (D10). Ninguna pieza nueva guarda estado en memoria: la caché y el límite de búsquedas viven en Redis (D2). |
 | S1 — Capas | `catalog/` y `sessions/` siguen `api/`, `application/`, `domain/` e `infrastructure/`. El adaptador de YouTube vive en `catalog/infrastructure/`. |
 | S2 — Solo C2 modifica la cola | El pedido entra por el caso de uso `RequestTrack` de C2 (D4). |
 | S4 — C2 obtiene canciones solo a través de C3 | `RequestTrack` valida la referencia con la interfaz de C3 (`TrackLookup`). C2 no llama a YouTube ni interpreta `yt:` (D4). |
@@ -158,11 +159,13 @@ La feature amplía la página del QR (C5) con un buscador y los pedidos del clie
     2. Con la sesión bloqueada, aplica `request`.
     3. Publica `queue.changed` tras el commit, como `EnqueueTrack`.
   - **Consulta del cliente, `ClientView(establishment_id, device_id)`:** devuelve el estado de la sesión, la canción que suena (solo el título), las pendientes del dispositivo en orden y el cupo libre.
+    - No carga la sesión entera: el repositorio tiene una lectura propia, sin bloqueo, que trae la fila de la sesión abierta, el título de la canción en `playing` y las pendientes de ese dispositivo, con el índice parcial `(session_id, requested_by)`.
+    - La piden todos los clientes conectados con cada cambio de la cola (D6) y la búsqueda para comprobar que la sesión está abierta, así que no puede crecer con las canciones que ya sonaron.
 - **Alternativas descartadas:**
   - **Confiar en el título y la referencia que manda el navegador:** un cliente podría poner cualquier título en el panel del propietario, o una referencia que no se puede reproducir. Contra S4.
   - **Un contador de cupo en Redis:** sería la única copia de una regla de negocio, contra S10, y se desincronizaría con los saltos y los cierres.
   - **Un índice único parcial sobre `(session_id, track_ref)` en `pending`:** blindaría las duplicadas, pero también las prohibiría para el propietario en B05, que la spec no decide. La regla vive en `request` y el bloqueo de la sesión evita la carrera entre dos pedidos.
-- **Consecuencias:** la búsqueda de duplicadas y el recuento del cupo recorren las canciones pendientes de la sesión, que ya se cargan con la sesión bloqueada. Un índice parcial `(session_id, requested_by) WHERE state = 'pending'` acelera el recuento de `ClientView`.
+- **Consecuencias:** la búsqueda de duplicadas y el recuento del cupo recorren las canciones pendientes de la sesión, que ya se cargan con la sesión bloqueada. Un índice parcial `(session_id, requested_by) WHERE state = 'pending'` acelera la lectura de `ClientView`. `ClientView` y `MusicSession` calculan lo mismo por caminos distintos: las pruebas de `ClientView` comparan su resultado con el de `pending_of` en los mismos casos.
 
 ### D5 — Rutas públicas del cliente
 
@@ -201,7 +204,12 @@ La feature amplía la página del QR (C5) con un buscador y los pedidos del clie
     - `SongSearch`: el buscador y sus resultados, cada uno con su botón «Pedir»;
     - `MyRequests`: lo que suena, las pendientes propias y «Te quedan N de 5».
   - **Avisos:** cada código de error de la API tiene su texto: sesión cerrada, cupo lleno, ya está en la cola, búsqueda no disponible y demasiadas búsquedas.
-  - **Cliente de tiempo real:** `src/web/src/realtime/client.ts` hoy pide el ticket y el estado a rutas del propietario. Se generaliza con dos funciones que recibe al crearse: `requestTicket` y `fetchState`. El panel y el reproductor pasan las de siempre y el cliente pasa las suyas. La lógica de versiones y reconexión no cambia.
+  - **Cliente de tiempo real:** `src/web/src/realtime/client.ts` hoy pide el ticket y el estado a rutas del propietario. Se generaliza con una fuente que recibe al crearse, con tres piezas:
+    - `requestTicket` y `fetchState`: el panel y el reproductor pasan las de siempre y el cliente pasa las suyas;
+    - `refreshOn`: los eventos tras los que se vuelve a pedir el estado. Para el cliente son los cinco de D6, no `player.claimed`. Para el panel y el reproductor es `null`: su estado lleva versión y solo se pide tras un salto.
+
+    La reconexión no cambia, ni la lógica de versiones del panel y el reproductor. El estado del cliente no lleva versión: cada respuesta se entrega, y si llegó un evento mientras se pedía, se pide otra.
+  - **La sala se abre tras la carga inicial:** esa respuesta trae la cookie del dispositivo, y la ruta del ticket la exige (D3, D6).
   - **Experiencia:** la página es para móvil y no pide nada antes de dejar buscar. El buscador espera a que el cliente pulse «Buscar», sin buscar mientras escribe, para no gastar cuota ni el límite de R013.
 - **Alternativas descartadas:**
   - **Buscar mientras se escribe:** gasta una búsqueda por tecla y agota el límite de R013 en un minuto.
@@ -234,16 +242,36 @@ La feature amplía la página del QR (C5) con un buscador y los pedidos del clie
 ### D10 — Prueba de carga de la búsqueda y los pedidos
 
 - **Contexto:** Q1 pide resultados en menos de 2 s con la carga de Q2 (5000 clientes en 50 establecimientos). La constitución exige verificar un requisito no funcional de rendimiento con una prueba de carga en `src/perf/`.
-- **Decisión:** `src/perf/client.js` con k6 contra el compose, con el catálogo falso. Cada usuario virtual hace el recorrido completo:
-  1. abre la página;
-  2. busca, a veces repitiendo búsquedas;
-  3. pide hasta llenar su cupo;
-  4. consulta su estado.
+- **Decisión:** `src/perf/client.js` con k6, con el catálogo falso y la API con 4 procesos (ADR-0015). Se corre de dos formas:
+  - **En local, a escala, como prueba de regresión:** contra el compose, con **20 establecimientos** y 2000 dispositivos, unas 345 peticiones por segundo. Es lo que se corre por defecto y lo que cierra T014. Un portátil no puede alojar a la vez la carga completa, la API, PostgreSQL y el propio k6 (ver las consecuencias).
+  - **Q2 completo, en la feature de infraestructura:** con 50 establecimientos y 5000 dispositivos (`ESTABLISHMENTS=50`), contra un entorno parecido al de producción, con varias tareas de la API. Hasta entonces, Q2 queda medido a escala, no entero.
 
-  Se reparten 50 establecimientos con su sesión abierta. Los umbrales son el p95 de la búsqueda por debajo de 2 s y 0 errores 5xx. El resultado queda anotado en el propio script.
+  En las dos, el mismo escenario:
+  - **Preparación, sin medir:** los establecimientos con su sesión abierta y 100 dispositivos por establecimiento, cada uno con su cookie.
+  - **Ritmo de la hora pico (Q2):** durante 10 minutos, tras 1 minuto de subida, llegan a ritmo constante:
+    - las búsquedas, 1 cada 5 minutos por cliente (con 50 establecimientos, unas 17 por segundo), la mitad repetidas entre clientes, para que salgan de la caché;
+    - los pedidos, 1 cada 10 minutos por cliente (unos 8 por segundo);
+    - por cada pedido, la consulta del estado de los 100 clientes de ese establecimiento, como hace el tiempo real (D6), repartida en 300 ms (unas 830 por segundo).
+  - **Umbrales:** el p95 de la búsqueda por debajo de 2 s (Q1), el p95 del estado por debajo de 1 s (Q4) y 0 errores 5xx. Los rechazos del cupo o de duplicadas no cuentan como fallo, porque los provoca el propio escenario.
+  - El resultado queda anotado en el propio script.
 - **Alternativas descartadas:**
   - **Medir contra YouTube real:** gastaría la cuota del día en una sola ejecución.
-- **Consecuencias:** la prueba mide el monolito, la caché y la base, no la latencia de YouTube. La de YouTube queda acotada por la espera de 1,5 s del adaptador (D1).
+  - **Q2 completo en local:** no cabe en la máquina (ver las consecuencias). Una prueba que siempre falla por la máquina no avisa de nada.
+- **Consecuencias:**
+  - La prueba mide el monolito, la caché y la base, no la latencia de YouTube. La de YouTube queda acotada por la espera de 1,5 s del adaptador (D1).
+  - La primera corrida, con un proceso y todos los clientes a la vez (unas 2000 peticiones por segundo), no cumplió: con 5000 clientes, el p95 de la búsqueda fue de 59,6 s, con 11 827 errores 5xx. Un proceso da como mucho unas 360 peticiones por segundo, incluso con la consulta más barata. De ahí la aclaración de Q2 en la spec, la lectura propia de `ClientView` (D4) y ADR-0015.
+  - Con 4 procesos y 50 establecimientos tampoco cumplió: el p95 de la búsqueda fue de 16 min y el del estado de 60 s, con 38 020 errores 5xx. Con la consulta más barata, los 4 procesos dan unas 600 peticiones por segundo con un p95 de 1 s. A 1000 por segundo, la API ocupa 3,8 núcleos, PostgreSQL 1,6 y k6 1,1, de los 8 de la máquina. Con 20 establecimientos cumplió los umbrales: un p95 de 0,99 s en la búsqueda, de 0,62 s en el estado y ningún 5xx.
+  - La corrida limpia con 20 establecimientos tampoco cumplió: p95 de 5 s en la búsqueda y de 3,39 s en el estado, con 2 errores 5xx, a unas 320 peticiones por segundo. Una corrida anterior que sí cumplió no cuenta: el equipo se suspendió a mitad. De ahí el pool fijo (D11).
+  - Las medidas en local tienen que hacerse con el equipo enchufado y sin otras cargas pesadas. Con batería y carga del sistema alta, el mismo techo bajó de unas 580 a unas 80 peticiones por segundo entre dos corridas.
+
+### D11 — Pool de conexiones fijo en la API
+
+- **Contexto:** con carga, el pool de cada proceso (5 conexiones fijas y 10 de desborde, los valores por defecto de SQLAlchemy) abre y cierra sin parar sus conexiones de desborde. Cada conexión nueva repite la consulta con que asyncpg averigua los tipos propios de la base, como el estado de una canción. En una muestra hubo 41 conexiones nuevas en 2 s y 18 de esas consultas activas a la vez, y PostgreSQL llegó a 3,7 núcleos (D10).
+- **Decisión:** `Database.from_url` fija el pool: 15 conexiones por proceso, sin desborde y comprobadas antes de usarse (`pool_pre_ping`). Las 15 se abren una vez y se reutilizan, así que la consulta de tipos corre una vez por conexión, no con cada pico. Con 4 procesos, el trabajador y la herramienta de desarrollo siguen siendo como mucho 90 de las 100 de PostgreSQL (ADR-0015).
+- **Alternativas descartadas:**
+  - **Desactivar la introspección del driver o registrar los tipos a mano:** ata el código a detalles internos de asyncpg, y con un pool fijo deja de importar.
+  - **Un pool externo (PgBouncer):** es una pieza más que desplegar; si hace falta, lo decide la feature de infraestructura.
+- **Consecuencias:** cuando las 15 conexiones de un proceso están ocupadas, las peticiones esperan turno en vez de abrir otra. Es lo que se quiere: el desborde era lo que disparaba el gasto. Con producción, la feature de infraestructura revisa el tamaño contra `max_connections` de RDS y el número de tareas.
 
 ## Componentes afectados
 
@@ -258,8 +286,11 @@ La feature amplía la página del QR (C5) con un buscador y los pedidos del clie
 | `src/backend/app/shared/realtime_ticket.py`, `src/realtime/src/ticket.ts` | Tipo de ticket `client` | R010 |
 | `src/backend/migrations/versions/0003_queue_requests.py` | `queue_item.requested_by` y su índice parcial | R002, R006, R007 |
 | `src/web/src/features/public-establishment/` | Buscador, pedidos, estado del cliente y avisos | R001, R003, R005, R006, R008, R009, R010, R012, R013, R014 |
-| `src/web/src/realtime/client.ts` | `requestTicket` y `fetchState` inyectables | R010 |
-| `src/perf/client.js` | Carga de la búsqueda y los pedidos | R003, R005 |
+| `src/web/src/realtime/client.ts` | Fuente inyectable: `requestTicket`, `fetchState` y `refreshOn` | R010 |
+| `src/backend/app/sessions/infrastructure/repositories.py` | Lectura propia de `ClientView`, sin cargar la sesión entera | R010 |
+| `src/perf/client.js` | Carga de la búsqueda, los pedidos y el estado al ritmo de Q2 | R003, R005 |
+| `src/backend/app/shared/db.py` | Pool de conexiones fijo, sin desborde (D11) | R003, R005 |
+| `src/docker-compose.yml`, `src/.env.example` | La API con `API_WORKERS` procesos, 4 por defecto (ADR-0015) | R003, R005 |
 | `src/docker-compose.yml`, `src/.env.example`, `app/shared/config.py` | `CATALOG_PROVIDER`, `YOUTUBE_API_KEY`, `DEVICE_TOKEN_SECRET` | R003, R012 |
 
 ## Modelo de datos
@@ -419,14 +450,14 @@ classDiagram
 | R007 | unitaria (una canción en `playing`, `skipped` o `discarded` no cuenta) e integración (tras `started`, tras `failed` y tras cerrar y abrir, el cupo vuelve) | `test_music_session_rules.py`, `test_client_music.py` |
 | R008 | integración (`GET music` con la sesión cerrada: `closed`; `POST requests` y `GET search`: `409 no_open_session`) y componente (aviso sin buscador) | `test_client_music.py`, `PublicEstablishment.test.tsx` |
 | R009 | unitaria (`AlreadyQueued` si está pendiente; una que ya sonó se acepta) e integración (`409 already_queued` sin gastar cupo) | `test_music_session_rules.py`, `test_client_music.py` |
-| R010 | servicio de tiempo real (C6 acepta el ticket `client` y lo une a su sala), componente (al llegar `queue.changed`, la página pide su estado y lo muestra) y e2e (al empezar a sonar su canción, el cliente ve el cupo recuperado sin recargar) | `src/realtime/test/rooms.test.ts`, `PublicEstablishment.test.tsx`, `client.spec.ts` |
+| R010 | integración (la lectura propia de `ClientView` da lo mismo que `pending_of`: lo que suena, solo las pendientes propias en orden y el cupo, también con canciones ya sonadas o saltadas), servicio de tiempo real (C6 acepta el ticket `client` y lo une a su sala), componente (al llegar `queue.changed`, la página pide su estado y lo muestra) y e2e (al empezar a sonar su canción, el cliente ve el cupo recuperado sin recargar) | `src/realtime/test/rooms.test.ts`, `PublicEstablishment.test.tsx`, `client.spec.ts` |
 | R011 | integración en la batería de aislamiento (la cookie de A no vale en las rutas de B: en B es un dispositivo nuevo; un pedido con la cookie de A no cambia la cola de A ni la de B; nadie ve los pedidos de otro dispositivo) y servicio de tiempo real (un ticket `client` de A no se une a la sala de B) | `src/backend/tests/integration/test_isolation.py`, `src/realtime/test/rooms.test.ts` |
 | R012 | unitaria (el adaptador lanza `CatalogUnavailable` ante un 5xx, un 403 de cuota o una espera agotada), integración (`503 search_unavailable` con el catálogo falso, sin cambiar la cola) y componente (aviso) | `test_youtube_catalog.py`, `test_client_music.py`, `PublicEstablishment.test.tsx` |
 | R013 | integración (la búsqueda 11 en un minuto da `429` con `Retry-After`; sin Redis, la búsqueda sigue) | `test_client_music.py` |
 | R014 | integración (`RequestTrack` con una referencia que el catálogo ya no reconoce lanza `UnknownTrack`; `POST requests` da `422 unknown_track` sin cambiar la cola ni el cupo) y componente (aviso de canción no disponible) | `src/backend/tests/integration/{test_catalog_cache.py,test_request_track.py}`, `test_client_music.py`, `PublicEstablishment.test.tsx` |
 
 **Requisitos no funcionales:**
-- **Q1 y Q2:** `src/perf/client.js`, con k6 y el catálogo falso (D10).
+- **Q1 y Q2:** `src/perf/client.js`, con k6, el catálogo falso y la API con 4 procesos (D10): en local, a escala, con 20 establecimientos; Q2 completo, con 50, en la feature de infraestructura. Su umbral del estado también mide Q4 en el servidor.
 - **Q4:** el e2e mide desde que empieza a sonar la canción del cliente hasta que ve su cupo recuperado, sin recargar.
 - **Q6:** se mide en R011.
 - **Q7:** se mide en R002, revisando las columnas guardadas.
@@ -438,7 +469,7 @@ classDiagram
 | ------ | ------- | ---------- |
 | La cuota de YouTube por defecto (10 000 unidades al día, unas 100 búsquedas) se agota en el piloto | Las búsquedas responden `503` y nadie puede pedir (R012) | Caché por establecimiento (D2), límite por dispositivo (R013) y la solicitud de ampliación de cuota que prevé ADR-0010. Si no basta, proponer una caché global (cambio de S8). |
 | La latencia de YouTube supera los 2 s de Q1 | Búsquedas lentas | Espera máxima de 1,5 s en el adaptador; los resultados repetidos salen de la caché. |
-| Cada cambio de la cola provoca un `GET music` por cliente conectado | Picos de lectura en la API | Es una consulta de lectura sin bloqueo; se mide con D10, y si hace falta se reparte con un retraso aleatorio. |
+| Cada cambio de la cola provoca un `GET music` por cliente conectado | Es la mayor parte de la carga: unas 830 lecturas por segundo con Q2 | Una lectura propia y barata (D4), varios procesos de la API (ADR-0015) y la medida de D10. Si no basta, se reparte con un retraso aleatorio o se reduce el reparto, que ADR-0015 descartó por ahora. |
 | Safari no guarda cookies `Secure` por http en local | El cliente en Safari no tiene dispositivo en local | Igual que la sesión del propietario: en HTTPS funciona. Se prueba en un entorno HTTPS. |
 
 ## Trazabilidad
@@ -466,5 +497,24 @@ La enmienda del 2026-10-27, durante la implementación de T006 a T008, añade:
 - **D4:** la lectura previa que rechaza con la sesión cerrada antes de consultar el catálogo.
 - **Contratos:** `CatalogUnavailable` en `RequestTrack` y la interfaz nueva de C1.
 - **Componentes, modelo de datos y pruebas:** las citas de R014 y de la migración nueva.
+
+No introduce requisitos.
+
+La enmienda del 2026-10-28, durante la implementación de T011 y T014, cambia:
+- **D7:** el cliente de tiempo real recibe una fuente con tres piezas, también `refreshOn`, y la sala del cliente se abre tras la carga inicial. Lo pidió el revisor de T011 y T012.
+- **D10:** el escenario sigue el ritmo de la hora pico que ahora fija Q2 en la spec, y la API se mide con 4 procesos. Añade el umbral del estado (Q4).
+- **D4:** `ClientView` tiene una lectura propia, sin cargar la sesión entera (tarea T017).
+- **ADR-0015:** la API corre con varios procesos (tarea T018), aprobada el 2026-10-28.
+
+No introduce requisitos: la aclaración de Q2 está en la spec.
+
+La segunda enmienda del 2026-10-28, al implementar T014, cambia:
+- **D10:** en local, la prueba de carga corre a escala, con 20 establecimientos, como prueba de regresión, y es la que cierra T014. Q2 completo, con 50 establecimientos, se mide en la feature de infraestructura, contra un entorno parecido al de producción. La eligió el usuario tras ver que la máquina local no aloja la carga completa. Anota también el hallazgo pendiente del pool de conexiones.
+
+No introduce requisitos: Q2 no cambia, solo dónde se mide entero.
+
+La tercera enmienda del 2026-10-28, al implementar T014, añade:
+- **D11:** el pool de conexiones de la API queda fijo, sin desborde (tarea T019), porque las conexiones de desborde disparaban el gasto de PostgreSQL. La eligió el usuario frente a bajar más la escala o aplazar T014.
+- **D10:** el resultado de la corrida limpia a escala y la condición de medir con el equipo enchufado.
 
 No introduce requisitos.

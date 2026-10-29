@@ -3,15 +3,23 @@
 // Abre una conexión de tiempo real al montarse y la cierra al desmontarse. Los
 // manejadores y `connect` se leen siempre en su última versión, sin reconectar en cada
 // render. Al conectar, el cliente entrega por `onState` el estado completo de la sesión.
-import { useCallback, useEffect, useRef } from "react";
+//
+// `useRoomEvents` es la del dueño y el reproductor; `useClientRoomEvents`, la del
+// cliente que llega por el QR (feature 003, plan D6), que recibe su propio estado.
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { useApi } from "../api/context";
 import {
+  clientSource,
   createRealtimeClient,
+  ownerSource,
+  type ClientMusicState,
   type Connect,
+  type MusicSessionState,
   type RealtimeClient,
   type RealtimeHandlers,
   type RealtimeRole,
+  type RealtimeSource,
 } from "./client";
 
 export interface RoomEvents {
@@ -21,20 +29,39 @@ export interface RoomEvents {
 
 export function useRoomEvents(
   role: RealtimeRole,
-  handlers: RealtimeHandlers,
+  handlers: RealtimeHandlers<MusicSessionState>,
   connect?: Connect,
 ): RoomEvents {
   const api = useApi();
+  const source = useMemo(() => ownerSource(api, role), [api, role]);
+  return useRealtime(source, handlers, connect);
+}
+
+export function useClientRoomEvents(
+  code: string,
+  handlers: RealtimeHandlers<ClientMusicState>,
+  connect?: Connect,
+): RoomEvents {
+  const api = useApi();
+  const source = useMemo(() => clientSource(api, code), [api, code]);
+  return useRealtime(source, handlers, connect);
+}
+
+function useRealtime<S>(
+  source: RealtimeSource<S>,
+  handlers: RealtimeHandlers<S>,
+  connect?: Connect,
+): RoomEvents {
   const latest = useRef(handlers);
   const connectRef = useRef(connect);
-  const client = useRef<RealtimeClient | null>(null);
+  const client = useRef<RealtimeClient<S> | null>(null);
 
   useEffect(() => {
     latest.current = handlers;
   });
 
   useEffect(() => {
-    const realtime = createRealtimeClient({ api, role, connect: connectRef.current });
+    const realtime = createRealtimeClient({ source, connect: connectRef.current });
     client.current = realtime;
     const unsubscribe = realtime.subscribe({
       onEvent: (event) => latest.current.onEvent?.(event),
@@ -45,7 +72,7 @@ export function useRoomEvents(
       realtime.close();
       client.current = null;
     };
-  }, [api, role]);
+  }, [source]);
 
   const observeVersion = useCallback((version: number) => {
     client.current?.observeVersion(version);

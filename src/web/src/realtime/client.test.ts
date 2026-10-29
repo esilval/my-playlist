@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { fakeApi } from "../test/fake-api";
-import { createRealtimeClient, type AuthCallback, type SessionEvent, type SocketLike } from "./client";
+import {
+  clientSource,
+  createRealtimeClient,
+  ownerSource,
+  type AuthCallback,
+  type SessionEvent,
+  type SocketLike,
+} from "./client";
 
 // Socket falso: guarda los manejadores y la función `auth`, para simular cada intento
 // de conexión (la primera y cada reconexión) y cada evento del servidor.
@@ -60,7 +67,7 @@ function setUp(stateVersion = 7) {
   const current = { body: state(stateVersion) };
   const api = fakeApi({ "GET /api/owner/music-session": () => ({ status: 200, body: current.body }) });
   const fake = fakeSocket();
-  const realtime = createRealtimeClient({ api: api.client, role: "owner", connect: fake.connect });
+  const realtime = createRealtimeClient({ source: ownerSource(api.client, "owner"), connect: fake.connect });
   const onEvent = vi.fn();
   const onState = vi.fn();
   realtime.subscribe({ onEvent, onState });
@@ -75,7 +82,7 @@ describe("cliente de tiempo real", () => {
       "POST /api/owner/realtime-ticket": () => ({ status: 200, body: { ticket: `t${++issued}`, expires_in: 60 } }),
     });
     const fake = fakeSocket();
-    createRealtimeClient({ api: client, role: "player", connect: fake.connect });
+    createRealtimeClient({ source: ownerSource(client, "player"), connect: fake.connect });
 
     // Cada intento (el primero y cada reconexión) usa un ticket nuevo: el anterior
     // pudo caducar (60 s).
@@ -95,8 +102,7 @@ describe("cliente de tiempo real", () => {
     const delays: number[] = [];
     const pending: (() => void)[] = [];
     createRealtimeClient({
-      api: client,
-      role: "owner",
+      source: ownerSource(client, "owner"),
       connect: fake.connect,
       schedule: (callback, delayMs) => {
         delays.push(delayMs);
@@ -183,7 +189,7 @@ describe("cliente de tiempo real", () => {
       "GET /api/owner/music-session": () => ({ status: 200, body: answers.length > 1 ? answers.shift() : answers[0] }),
     });
     const fake = fakeSocket();
-    const realtime = createRealtimeClient({ api: api.client, role: "owner", connect: fake.connect });
+    const realtime = createRealtimeClient({ source: ownerSource(api.client, "owner"), connect: fake.connect });
     const onState = vi.fn();
     realtime.subscribe({ onState });
     const resyncs = () => api.sent.filter((request) => request.path === "/api/owner/music-session").length;
@@ -228,7 +234,7 @@ describe("cliente de tiempo real", () => {
       "GET /api/owner/music-session": () => ({ status: 200, body: answers.length > 1 ? answers.shift() : answers[0] }),
     });
     const fake = fakeSocket();
-    const realtime = createRealtimeClient({ api: api.client, role: "owner", connect: fake.connect });
+    const realtime = createRealtimeClient({ source: ownerSource(api.client, "owner"), connect: fake.connect });
     const onState = vi.fn();
     realtime.subscribe({ onState });
 
@@ -250,7 +256,7 @@ describe("cliente de tiempo real", () => {
   it("F002_R008 entrega queue.changed a los suscriptores", () => {
     const { client } = fakeApi({});
     const fake = fakeSocket();
-    const realtime = createRealtimeClient({ api: client, role: "player", connect: fake.connect });
+    const realtime = createRealtimeClient({ source: ownerSource(client, "player"), connect: fake.connect });
     const first = vi.fn();
     const second = vi.fn();
     realtime.subscribe({ onEvent: first });
@@ -270,5 +276,75 @@ describe("cliente de tiempo real", () => {
     expect(fake.socket.disconnect).toHaveBeenCalled();
     fake.emit("queue.changed", event("queue.changed", 3));
     expect(first).toHaveBeenCalledTimes(2);
+  });
+
+  it("F003_R010 el cliente de tiempo real usa el ticket y el estado que recibe", async () => {
+    const music = "/api/public/establishments/ABC123/music";
+    const ticketPath = "/api/public/establishments/ABC123/realtime-ticket";
+    const clientState = (free: number) => ({
+      status: "open",
+      now_playing: { title: "Suena" },
+      mine: [],
+      quota: { limit: 5, free },
+    });
+    // Cada petición de estado devuelve el cupo siguiente: 5, 4, 3…
+    let free = 6;
+    const api = fakeApi({
+      [`POST ${ticketPath}`]: { status: 200, body: { ticket: "tc", expires_in: 60 } },
+      [`GET ${music}`]: () => ({ status: 200, body: clientState(--free) }),
+    });
+    const fake = fakeSocket();
+    const realtime = createRealtimeClient({ source: clientSource(api.client, "ABC123"), connect: fake.connect });
+    const onEvent = vi.fn();
+    const onState = vi.fn();
+    realtime.subscribe({ onEvent, onState });
+    const fetches = () => api.sent.filter((request) => request.path === music).length;
+
+    // El ticket sale de la ruta pública del establecimiento, sin rol: lo pone la API.
+    expect(await fake.attempt()).toEqual({ ticket: "tc" });
+    expect(api.sent).toContainEqual({ method: "POST", path: ticketPath, body: undefined });
+    expect(api.sent.some((request) => request.path.startsWith("/api/owner/"))).toBe(false);
+
+    // Al conectar, entrega el estado del cliente.
+    fake.emit("connect");
+    await vi.waitFor(() => expect(onState).toHaveBeenLastCalledWith(clientState(5)));
+
+    // Su estado no lleva versión: lo vuelve a pedir tras cada evento, sin salto de versión.
+    fake.emit("queue.changed", event("queue.changed", 1));
+    await vi.waitFor(() => expect(onState).toHaveBeenLastCalledWith(clientState(4)));
+    expect(onEvent).toHaveBeenCalledWith(event("queue.changed", 1));
+
+    // Un evento mientras se pide el estado: se entrega esa respuesta y se pide otra.
+    fake.emit("queue.changed", event("queue.changed", 2));
+    fake.emit("queue.changed", event("queue.changed", 3));
+    await vi.waitFor(() => expect(onState).toHaveBeenLastCalledWith(clientState(2)));
+    expect(fetches()).toBe(4);
+
+    // Los demás eventos que cambian lo que ve (D6) también lo piden, cada uno una vez.
+    const others = [
+      event("track.started", 4, { title: "Otra" }),
+      event("track.failed", 5, { title: "Rota" }),
+      event("session.closed", 6),
+      event("session.opened", 0, {}, "s2"),
+    ];
+    for (const [index, other] of others.entries()) {
+      fake.emit(other.type, other);
+      await vi.waitFor(() => expect(fetches()).toBe(5 + index));
+    }
+    // Reclamar el reproductor no le cambia nada al cliente: no lo pide.
+    fake.emit("player.claimed", event("player.claimed", 1, { epoch: 1 }, "s2"));
+    await Promise.resolve();
+    expect(fetches()).toBe(8);
+    await vi.waitFor(() => expect(onState).toHaveBeenCalledTimes(8));
+  });
+
+  it("sin ticket del establecimiento, el intento de conexión va sin él", async () => {
+    const { client } = fakeApi({
+      "POST /api/public/establishments/ABC123/realtime-ticket": { status: 401, body: { error: "device_required" } },
+    });
+    const fake = fakeSocket();
+    createRealtimeClient({ source: clientSource(client, "ABC123"), connect: fake.connect });
+
+    expect(await fake.attempt()).toEqual({ ticket: undefined });
   });
 });

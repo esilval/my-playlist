@@ -8,9 +8,10 @@ solo se escriben las canciones que cambiaron desde que se cargaron.
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import astuple
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import CursorResult, RowMapping, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -29,6 +30,32 @@ _ITEM_COLUMNS = (
 )
 
 
+def _session(row: RowMapping, items: CursorResult[Any]) -> MusicSession:
+    return MusicSession(
+        id=row["id"],
+        establishment_id=row["establishment_id"],
+        opened_at=row["opened_at"],
+        closed_at=row["closed_at"],
+        player_epoch=row["player_epoch"],
+        player_seen_at=row["player_seen_at"],
+        version=row["version"],
+        items=[
+            QueueItem(
+                id=item["id"],
+                position=item["position"],
+                track_ref=item["track_ref"],
+                title=item["title"],
+                state=QueueItemState(item["state"]),
+                failure_reason=item["failure_reason"],
+                started_at=item["started_at"],
+                finished_at=item["finished_at"],
+                requested_by=item["requested_by"],
+            )
+            for item in items.mappings()
+        ],
+    )
+
+
 class SqlSessionsRepository:
     def __init__(self, connection: AsyncConnection, establishment_id: UUID) -> None:
         self._connection = connection
@@ -38,6 +65,34 @@ class SqlSessionsRepository:
 
     async def open_session(self, *, lock: bool) -> MusicSession | None:
         locking = " FOR UPDATE" if lock else ""
+        row = await self._open_row(locking)
+        if row is None:
+            return None
+        items = await self._connection.execute(
+            text(f"SELECT {_ITEM_COLUMNS} FROM queue_item WHERE session_id = :s ORDER BY position"),
+            {"s": row["id"]},
+        )
+        session = _session(row, items)
+        self._loaded = {item.id: astuple(item) for item in session.items}
+        return session
+
+    async def client_snapshot(self, device_id: UUID) -> MusicSession | None:
+        # Sin las canciones que ya sonaron ni las pendientes de otros: la consulta no crece
+        # con la noche (D4). Devuelve una sesión incompleta: solo para leer, no se guarda.
+        row = await self._open_row("")
+        if row is None:
+            return None
+        items = await self._connection.execute(
+            text(
+                f"SELECT {_ITEM_COLUMNS} FROM queue_item WHERE session_id = :s "
+                "AND (state = 'playing' OR (state = 'pending' AND requested_by = :d)) "
+                "ORDER BY position"
+            ),
+            {"s": row["id"], "d": device_id},
+        )
+        return _session(row, items)
+
+    async def _open_row(self, locking: str) -> RowMapping | None:
         found = await self._connection.execute(
             text(
                 f"SELECT {_SESSION_COLUMNS} FROM music_session "
@@ -45,38 +100,7 @@ class SqlSessionsRepository:
             ),
             {"e": self._establishment_id},
         )
-        row = found.mappings().one_or_none()
-        if row is None:
-            return None
-        items = await self._connection.execute(
-            text(f"SELECT {_ITEM_COLUMNS} FROM queue_item WHERE session_id = :s ORDER BY position"),
-            {"s": row["id"]},
-        )
-        session = MusicSession(
-            id=row["id"],
-            establishment_id=row["establishment_id"],
-            opened_at=row["opened_at"],
-            closed_at=row["closed_at"],
-            player_epoch=row["player_epoch"],
-            player_seen_at=row["player_seen_at"],
-            version=row["version"],
-            items=[
-                QueueItem(
-                    id=item["id"],
-                    position=item["position"],
-                    track_ref=item["track_ref"],
-                    title=item["title"],
-                    state=QueueItemState(item["state"]),
-                    failure_reason=item["failure_reason"],
-                    started_at=item["started_at"],
-                    finished_at=item["finished_at"],
-                    requested_by=item["requested_by"],
-                )
-                for item in items.mappings()
-            ],
-        )
-        self._loaded = {item.id: astuple(item) for item in session.items}
-        return session
+        return found.mappings().one_or_none()
 
     async def add(self, session: MusicSession) -> None:
         try:

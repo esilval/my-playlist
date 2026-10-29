@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-10-27  |
-| Estado | Approved · 65677228e18f       |
+| Estado | Approved · 4293a7c64c42       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -161,7 +161,7 @@
 
 ### T010 — Batería de aislamiento del cliente
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R011
 - **Depende de:** T008, T009
 - **Archivos:** `src/backend/tests/integration/test_isolation.py`
@@ -174,7 +174,7 @@
 
 ### T011 — Web: tipos de la API y cliente de tiempo real generalizado
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R010
 - **Depende de:** T009
 - **Archivos:** `src/web/src/api/schema.d.ts` (regenerado), `src/web/src/realtime/{client.ts,useRoomEvents.ts,client.test.ts}`, `src/web/src/features/player/Player.tsx`, `src/web/src/features/music-session/MusicSessionCard.tsx`
@@ -185,7 +185,7 @@
 
 ### T012 — Web: la página del cliente
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R003, R005, R006, R008, R009, R010, R012, R013, R014
 - **Depende de:** T011
 - **Archivos:** `src/web/src/features/public-establishment/{PublicEstablishment.tsx,useClientMusic.ts,SongSearch.tsx,MyRequests.tsx,PublicEstablishment.test.tsx}`
@@ -206,7 +206,7 @@
 
 ### T013 — Pruebas e2e del cliente
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R005, R006, R010
 - **Depende de:** T012
 - **Archivos:** `src/web/e2e/client.spec.ts`, `src/web/e2e/helpers/queue.ts`
@@ -218,17 +218,19 @@
 
 ### T014 — Prueba de carga del cliente `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003, R005
-- **Depende de:** T008
+- **Depende de:** T008, T017, T018, T019
 - **Archivos:** `src/perf/client.js`, `src/perf/README.md`
 - **Hecho cuando:**
-  - `k6 run src/perf/client.js` contra el compose, con el catálogo falso, cumple con 50 establecimientos y 5000 usuarios virtuales: p95 de la búsqueda por debajo de 2 s y 0 respuestas 5xx (Q1, Q2).
-  - El resultado queda anotado en el propio script.
+  - `k6 run src/perf/client.js` contra el compose, con el catálogo falso y la API con 4 procesos, cumple el escenario de D10 a escala: 20 establecimientos, 2000 dispositivos y el ritmo de la hora pico de Q2 durante 10 minutos. Es lo que corre el script por defecto; `ESTABLISHMENTS=50` da Q2 completo.
+  - Umbrales: p95 de la búsqueda por debajo de 2 s (Q1), p95 del estado por debajo de 1 s (Q4) y 0 respuestas 5xx.
+  - El resultado queda anotado en el propio script, también el de las corridas que no cumplieron.
+  - `src/perf/README.md` explica la prueba, cómo correrla a escala y entera, y que Q2 completo se mide en la feature de infraestructura.
 
 ### T015 — Documentación del catálogo y del cliente
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003, R012
 - **Depende de:** T007, T013
 - **Archivos:** `README.md`, `src/backend/README.md`, `src/web/README.md`
@@ -236,7 +238,8 @@
   - el catálogo, con su adaptador falso y cómo usar YouTube real en local con `CATALOG_PROVIDER=youtube` y `YOUTUBE_API_KEY`;
   - las variables nuevas;
   - la página del cliente;
-  - cómo correr las pruebas nuevas.
+  - cómo correr las pruebas nuevas, también la de carga del cliente;
+  - que la API corre con `API_WORKERS` procesos (ADR-0015) y que Redis tiene que ser la versión 7 o posterior en producción (el límite de búsquedas usa `EXPIRE … NX`).
 
 ### T016 — C1: resolver el establecimiento de un código público
 
@@ -252,20 +255,55 @@
   - La batería de funciones `SECURITY DEFINER` incluye la nueva: solo `app_api` puede ejecutarla.
   - `public_establishment` sigue devolviendo solo el nombre.
 
+### T017 — C2: lectura propia del estado del cliente
+
+- **Estado:** `[x]`
+- **Requisitos:** R010
+- **Depende de:** T006
+- **Archivos:** `src/backend/app/sessions/{domain/ports.py,infrastructure/repositories.py,application/client_view.py}`, `src/backend/tests/integration/test_request_track.py`
+- **Hecho cuando:**
+  - `ClientView` ya no carga la sesión entera: el repositorio trae la sesión abierta, el título de la canción en `playing` y las pendientes del dispositivo (D4).
+  - Pasa `test_F003_R010_la_lectura_del_cliente_da_lo_mismo_que_pending_of`, con canciones ya sonadas, saltadas, pendientes de otros dispositivos y de la herramienta de desarrollo.
+  - Siguen en verde las pruebas de `ClientView`, `test_client_music.py` y `test_isolation.py`.
+
+### T018 — La API con varios procesos en el compose
+
+- **Estado:** `[x]`
+- **Requisitos:** R003, R005
+- **Depende de:** —
+- **Archivos:** `src/docker-compose.yml`, `src/.env.example`
+- **Hecho cuando:**
+  - Con ADR-0015 aprobado, el servicio `api` arranca uvicorn con `--workers ${API_WORKERS:-4}`, tras aplicar las migraciones una sola vez.
+  - `docker compose up -d --build` deja la API sana, con 4 procesos de uvicorn además del principal.
+  - La suite e2e completa pasa contra ese compose.
+  - `src/.env.example` documenta `API_WORKERS`.
+
+### T019 — Pool de conexiones fijo en la API
+
+- **Estado:** `[x]`
+- **Requisitos:** R003, R005
+- **Depende de:** —
+- **Archivos:** `src/backend/app/shared/db.py`, `src/backend/tests/unit/test_db_pool.py`, `src/docker-compose.yml` (el comentario del pool)
+- **Hecho cuando:**
+  - `Database.from_url` crea el engine con 15 conexiones, sin desborde y con `pool_pre_ping` (D11).
+  - Pasa `test_F003_R003_el_pool_de_la_api_es_fijo_sin_desborde`.
+  - La suite del backend sigue en verde y la e2e pasa contra el compose.
+  - Con carga (el script de techo de D10, a 600 peticiones por segundo), PostgreSQL no muestra conexiones nuevas tras el arranque.
+
 ## Cobertura
 
 | Requisito | Tareas |
 | --------- | ------ |
 | R001 | T008, T012, T013, T016 |
 | R002 | T001, T003, T007, T008 |
-| R003 | T004, T005, T007, T008, T012, T014, T015 |
+| R003 | T004, T005, T007, T008, T012, T014, T015, T018, T019 |
 | R004 | T004 |
-| R005 | T002, T006, T008, T012, T013, T014 |
+| R005 | T002, T006, T008, T012, T013, T014, T018, T019 |
 | R006 | T001, T002, T006, T008, T012, T013 |
 | R007 | T002, T006 |
 | R008 | T002, T006, T008, T012 |
 | R009 | T002, T006, T008, T012 |
-| R010 | T006, T008, T009, T011, T012, T013 |
+| R010 | T006, T008, T009, T011, T012, T013, T017 |
 | R011 | T003, T009, T010, T016 |
 | R012 | T004, T005, T008, T012, T015 |
 | R013 | T005, T008, T012 |

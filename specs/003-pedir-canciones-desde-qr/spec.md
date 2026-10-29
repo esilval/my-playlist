@@ -4,7 +4,7 @@
 | ------ | ------------ |
 | ID     | `003-pedir-canciones-desde-qr`     |
 | Fecha  | 2026-10-27     |
-| Estado | Approved · d22c8422fb2d        |
+| Estado | Approved · 3c7d68505f6d        |
 | Issue  | —            |
 | Origen | B03 · G1 · D1§1, D1§2, D1§3 · C2, C3, C5 |
 
@@ -151,7 +151,7 @@ Patrones:
 ## Requisitos no funcionales
 
 - **Búsqueda rápida (Q1):** los resultados de una búsqueda aparecen en la pantalla del cliente en menos de 2 s, también con la carga de Q2.
-- **Carga (Q2):** con 50 establecimientos con la sesión abierta y 100 clientes conectados en cada uno (5000 clientes), el sistema atiende búsquedas, pedidos y actualizaciones cumpliendo Q1 y Q4, sin rechazar peticiones salvo por el límite de R013.
+- **Carga (Q2):** con 50 establecimientos con la sesión abierta y 100 clientes conectados en cada uno (5000 clientes), el sistema atiende búsquedas, pedidos y actualizaciones cumpliendo Q1 y Q4, sin rechazar peticiones salvo por el límite de R013. Es la hora pico: cada cliente hace de media 1 búsqueda cada 5 minutos y 1 pedido cada 10 minutos, así que en cada establecimiento entran unos 10 pedidos por minuto, y cada uno es un cambio que ven sus 100 clientes.
 - **Tiempo real (Q4):** un pedido aceptado, o un cambio de la canción que suena, se ve en el móvil de los clientes conectados y en el panel del propietario en menos de 1 s.
 - **Aislamiento (Q6):** el 100 % de los intentos de usar en un establecimiento la identificación de otro se rechaza, y 0 pedidos de otros dispositivos u otros establecimientos quedan expuestos.
 - **Datos mínimos (Q7):** se guardan 0 datos personales del cliente, solo un identificador anónimo del dispositivo.
@@ -183,3 +183,7 @@ Patrones:
   - **Aclaración de R011, sin cambio de comportamiento:** el criterio decía que el cliente con la identificación de A «no ve nada de B». Pero la página de B es pública: la ve cualquiera que abra su QR. Lo que se aísla es la identificación del dispositivo y los pedidos: en B, la identificación de A no vale y el cliente es un dispositivo nuevo, y nadie ve los pedidos de otro dispositivo. El requisito, sus criterios y Q6 quedan redactados así. Todavía no hay código ni pruebas de R011.
   - **Requisito nuevo R014:** qué pasa si la canción que el cliente pide ya no existe o ya no se puede reproducir. Motivo: el plan lo rechazaba sin que la spec dijera qué ve el cliente.
   - IDs afectados: R011 (aclarado), R014 (nuevo).
+
+- **2026-10-28 — Aclaración de Q2, sin cambio de comportamiento:**
+  - Q2 no decía cuánto pide cada cliente, y la prueba de carga hacía actuar a los 5000 clientes en unos 25 s (unas 2000 peticiones por segundo). Ahora fija el ritmo de la hora pico: de media, 1 búsqueda cada 5 minutos y 1 pedido cada 10 minutos por cliente.
+  - IDs afectados: ninguno (Q2 es un requisito no funcional). Ninguna prueba que hoy pasa tiene que cambiar.
