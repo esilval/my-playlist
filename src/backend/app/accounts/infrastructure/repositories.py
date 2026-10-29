@@ -241,6 +241,15 @@ class SqlAccountsRepository:
         ).scalar_one_or_none()
         return name
 
+    async def public_establishment_id(self, public_code: str) -> UUID | None:
+        establishment_id: UUID | None = (
+            await self._connection.execute(
+                text("SELECT establishment_id FROM public_establishment_id(:code)"),
+                {"code": public_code},
+            )
+        ).scalar_one_or_none()
+        return establishment_id
+
     async def recent_email_times(
         self,
         *,

@@ -45,3 +45,16 @@ class SessionsUnitOfWork(Protocol):
     def __call__(self, establishment_id: UUID) -> AbstractAsyncContextManager[SessionsRepository]:
         """Una transacción con el contexto de aislamiento del establecimiento (ADR-0009)."""
         ...
+
+
+class ClientSessionsReader(Protocol):
+    async def client_snapshot(self, device_id: UUID) -> MusicSession | None:
+        """La sesión abierta, sin bloquear, con solo la canción que suena y las pendientes
+        de ese dispositivo (plan D4). Es para leer lo que ve el cliente: no se guarda."""
+        ...
+
+
+class ClientReadUnitOfWork(Protocol):
+    def __call__(self, establishment_id: UUID) -> AbstractAsyncContextManager[ClientSessionsReader]:
+        """Una transacción con el contexto de aislamiento del establecimiento (ADR-0009)."""
+        ...

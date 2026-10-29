@@ -1,4 +1,5 @@
-// Preparar la sesión de música para las pruebas e2e del reproductor (plan D9).
+// Preparar la sesión de música para las pruebas e2e del reproductor (plan D9) y del
+// cliente que pide desde el QR (feature 003, T013).
 //
 // Las canciones entran en la cola con la herramienta de desarrollo `devtools enqueue`,
 // dentro del contenedor de la API: usa el mismo caso de uso que usará B03 y publica
@@ -8,7 +9,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { expect, type BrowserContext, type Page, type Request } from "@playwright/test";
+import { devices, expect, type Browser, type BrowserContext, type Page, type Request } from "@playwright/test";
 
 import { loginInUi, registerByApi, uniqueEmail, verifyFromMail } from "./owners";
 
@@ -54,6 +55,36 @@ export async function ownerWithMusicSession(page: Page, baseURL: string): Promis
   const opened = await page.request.post("/api/owner/music-session", { headers: spaHeaders(baseURL) });
   expect(opened.status()).toBe(201);
   return email;
+}
+
+/** La URL pública del QR del propietario, tal como la muestra su panel. */
+export async function publicUrl(page: Page): Promise<string> {
+  await page.goto("/panel");
+  const url = await page.getByRole("link", { name: /\/l\// }).textContent();
+  expect(url).toMatch(/\/l\/[0-9A-Z]{10}$/);
+  return url ?? "";
+}
+
+/**
+ * El móvil de un cliente: un navegador propio, sin la sesión del propietario ni cuenta,
+ * con la página del QR abierta. Cada uno tiene su cookie de dispositivo.
+ */
+export async function clientPhone(browser: Browser, url: string): Promise<Page> {
+  // Chromium móvil (plan, Q8): pantalla, toque y agente de un Android actual.
+  const context = await browser.newContext({ ...devices["Pixel 7"] });
+  const phone = await context.newPage();
+  await phone.goto(url);
+  await expect(phone.getByRole("search")).toBeVisible();
+  return phone;
+}
+
+/** Busca un texto en el catálogo falso y pide el resultado número `n` («Canción n de …»). */
+export async function requestSong(phone: Page, query: string, n: number): Promise<string> {
+  await phone.getByLabel("Canción, artista o álbum").fill(query);
+  await phone.getByRole("button", { name: "Buscar" }).click();
+  const title = `Canción ${n} de ${query}`;
+  await phone.getByRole("button", { name: `Pedir «${title}»` }).click();
+  return title;
 }
 
 /** Otro navegador (contexto) con la sesión iniciada del mismo propietario. */

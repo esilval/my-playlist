@@ -916,6 +916,7 @@ dependencies = [
     { name = "boto3" },
     { name = "email-validator" },
     { name = "fastapi" },
+    { name = "httpx2" },
     { name = "pillow" },
     { name = "pydantic-settings" },
     { name = "redis" },
@@ -928,7 +929,6 @@ dependencies = [
 dev = [
     { name = "anyio" },
     { name = "boto3-stubs", extra = ["sesv2"] },
-    { name = "httpx2" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -944,6 +944,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.35" },
     { name = "email-validator", specifier = ">=2.2" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx2", specifier = ">=2.13" },
     { name = "pillow", specifier = ">=11" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "redis", specifier = ">=5.2" },
@@ -956,7 +957,6 @@ requires-dist = [
 dev = [
     { name = "anyio", specifier = ">=4.6" },
     { name = "boto3-stubs", extras = ["sesv2"], specifier = ">=1.35" },
-    { name = "httpx2", specifier = ">=2.13" },
     { name = "mypy", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-cov", specifier = ">=7.1.0" },

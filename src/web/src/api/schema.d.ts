@@ -332,6 +332,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/public/establishments/{code}/music": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Client Music
+         * @description El estado del cliente (R001, R008, R010). Emite la cookie del dispositivo si falta o
+         *     no vale para este establecimiento: entonces es un dispositivo nuevo (R002, R011).
+         */
+        get: operations["client_music_api_public_establishments__code__music_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/public/establishments/{code}/realtime-ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Client Realtime Ticket
+         * @description Ticket de tiempo real de tipo `client` (ADR-0014, plan D6): con él, el navegador se
+         *     une a la sala de este establecimiento y recibe los cambios de la cola (R010). Pide la
+         *     cookie del dispositivo, así que solo vale para el establecimiento de esa cookie (R011).
+         */
+        post: operations["client_realtime_ticket_api_public_establishments__code__realtime_ticket_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/public/establishments/{code}/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Client Request
+         * @description Pide una canción (R005). La rechazan la sesión cerrada (R008), el cupo lleno
+         *     (R006), una canción ya pendiente (R009) o una que ya no se puede reproducir (R014).
+         */
+        post: operations["client_request_api_public_establishments__code__requests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/public/establishments/{code}/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Client Search
+         * @description Busca en el catálogo (R003). Con la sesión cerrada no se busca (R008); más de 10
+         *     búsquedas por minuto dan 429 (R013) y el proveedor caído, 503 (R012).
+         */
+        get: operations["client_search_api_public_establishments__code__search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -372,6 +457,18 @@ export interface components {
             /** Epoch */
             epoch: number;
             next: components["schemas"]["TrackOut"] | null;
+        };
+        /** ClientMusicOut */
+        ClientMusicOut: {
+            /** Mine */
+            mine: components["schemas"]["RequestedTrackOut"][];
+            now_playing: components["schemas"]["NowPlayingOut"] | null;
+            quota: components["schemas"]["QuotaOut"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "closed";
         };
         /** DataPolicyOut */
         DataPolicyOut: {
@@ -447,6 +544,11 @@ export interface components {
              */
             status: "open" | "closed";
         };
+        /** NowPlayingOut */
+        NowPlayingOut: {
+            /** Title */
+            title: string;
+        };
         /** OwnerMeOut */
         OwnerMeOut: {
             account: components["schemas"]["AccountOut"];
@@ -511,6 +613,13 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** QuotaOut */
+        QuotaOut: {
+            /** Free */
+            free: number;
+            /** Limit */
+            limit: number;
+        };
         /** RegisterIn */
         RegisterIn: {
             /** Address */
@@ -543,6 +652,27 @@ export interface components {
              */
             policy_version: string;
         };
+        /** RequestIn */
+        RequestIn: {
+            /** Ref */
+            ref: string;
+        };
+        /** RequestedTrackOut */
+        RequestedTrackOut: {
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Title */
+            title: string;
+        };
+        /** RequestsOut */
+        RequestsOut: {
+            /** Mine */
+            mine: components["schemas"]["RequestedTrackOut"][];
+            quota: components["schemas"]["QuotaOut"];
+        };
         /** ResendOut */
         ResendOut: {
             /**
@@ -551,6 +681,11 @@ export interface components {
              * @constant
              */
             status: "check_email";
+        };
+        /** SearchOut */
+        SearchOut: {
+            /** Results */
+            results: components["schemas"]["TrackResultOut"][];
         };
         /** SessionEnvelope */
         SessionEnvelope: {
@@ -602,6 +737,15 @@ export interface components {
             title: string;
             /** Track Ref */
             track_ref: string;
+        };
+        /** TrackResultOut */
+        TrackResultOut: {
+            /** Author */
+            author: string;
+            /** Ref */
+            ref: string;
+            /** Title */
+            title: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -1396,6 +1540,219 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    client_music_api_public_establishments__code__music_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientMusicOut"];
+                };
+            };
+            /** @description not_found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    client_realtime_ticket_api_public_establishments__code__realtime_ticket_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketOut"];
+                };
+            };
+            /** @description device_required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not_found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    client_request_api_public_establishments__code__requests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RequestIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestsOut"];
+                };
+            };
+            /** @description device_required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not_found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no_open_session · quota_exceeded · already_queued */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown_track */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description search_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    client_search_api_public_establishments__code__search_get: {
+        parameters: {
+            query?: {
+                /** @description Texto a buscar, de 1 a 100 caracteres. */
+                q?: string;
+            };
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchOut"];
+                };
+            };
+            /** @description device_required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not_found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no_open_session */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description too_many_searches */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description search_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

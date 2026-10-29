@@ -12,8 +12,8 @@ const NOW = 1_800_000_000;
 
 // Firma con el mismo formato que el monolito; los vectores de ticket.test.ts
 // comprueban que ambos coinciden.
-function ticketFor(establishmentId: string, exp = NOW + 60): string {
-  const payload = { est: establishmentId, exp, jti: randomUUID(), role: "owner" };
+function ticketFor(establishmentId: string, exp = NOW + 60, role = "owner"): string {
+  const payload = { est: establishmentId, exp, jti: randomUUID(), role };
   const segment = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signature = createHmac("sha256", SECRET).update(segment).digest("base64url");
   return `${segment}.${signature}`;
@@ -104,6 +104,39 @@ describe("salas por establecimiento", () => {
     const atB = nextEvent(clientB, "track.started", 1000);
     server.io.to(roomFor(b)).emit("track.started", { title: "de B" });
     expect(await atB).toEqual({ title: "de B" });
+    expect(await atA).toBeUndefined();
+  });
+
+  it("F003_R010 acepta el ticket client y lo une a la sala de su establecimiento", async () => {
+    const a = randomUUID();
+    const client = open(ticketFor(a, NOW + 60, "client"));
+    await connected(client);
+
+    const [socket] = await server.io.fetchSockets();
+    expect([...(socket?.rooms ?? [])].sort()).toEqual([roomFor(a), socket?.id].sort());
+    // Recibe los cambios de la cola de su establecimiento.
+    const received = nextEvent(client, "queue.changed", 1000);
+    server.io.to(roomFor(a)).emit("queue.changed", { session_id: "s", version: 2 });
+    expect(await received).toEqual({ session_id: "s", version: 2 });
+
+    // Un tipo que no existe no entra.
+    expect(await refused(open(ticketFor(a, NOW + 60, "screen-x")))).toBe("unauthorized");
+  });
+
+  it("F003_R011 un ticket client de un establecimiento no entra en la sala de otro", async () => {
+    const a = randomUUID();
+    const b = randomUUID();
+    const clientA = open(ticketFor(a, NOW + 60, "client"));
+    const ownerB = open(ticketFor(b));
+    await Promise.all([connected(clientA), connected(ownerB)]);
+
+    clientA.emit("join", roomFor(b));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const inB = await server.io.in(roomFor(b)).fetchSockets();
+    expect(inB.map((socket) => socket.id)).toEqual([ownerB.id]);
+    const atA = nextEvent(clientA, "queue.changed", 300);
+    server.io.to(roomFor(b)).emit("queue.changed", { session_id: "de B", version: 1 });
     expect(await atA).toBeUndefined();
   });
 });

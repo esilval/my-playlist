@@ -27,8 +27,8 @@ El detalle está en [`product/brief.md`](product/brief.md), y el documento de or
 | Candidata | Funcionalidad | Estado |
 | --------- | ------------- | ------ |
 | B01 | Alta del establecimiento y su QR | **Implementada** ([feature 001](specs/001-alta-establecimiento-qr/)). Falta la prueba manual de escaneo del QR impreso. |
-| B02 | Sesión de música y reproductor del local | **En curso** ([feature 002](specs/002-sesion-musica-reproductor-local/)): hechos el backend y el servicio de tiempo real; faltan el reproductor y la tarjeta del panel en la web. |
-| B03 | Pedir canciones desde el QR | Pendiente |
+| B02 | Sesión de música y reproductor del local | **Implementada** ([feature 002](specs/002-sesion-musica-reproductor-local/)). Falta la prueba manual con YouTube real en Safari y Edge. |
+| B03 | Pedir canciones desde el QR | **Implementada** ([feature 003](specs/003-pedir-canciones-desde-qr/)). Q2 se midió a escala; la medida completa queda para la feature de infraestructura. |
 | B04 | Ventana anti-repetición | Pendiente |
 | B05 | Administrar la cola de la sesión | Pendiente |
 | B06 | Pantalla pública de la cola | Pendiente |
@@ -130,10 +130,17 @@ docker compose up -d --build
 | Mailpit (correos de prueba) | http://localhost:8025 |
 | PostgreSQL / Redis | `localhost:5432` / `localhost:6379` |
 
-La API aplica las migraciones al arrancar, y el servicio `worker` envía los correos a Mailpit. Para probar el alta completa:
+La API aplica las migraciones al arrancar y corre con 4 procesos (`API_WORKERS`, ADR-0015). El servicio `worker` envía los correos a Mailpit. Para probar el alta completa:
 1. Regístrate en http://localhost:5173/registro.
 2. Abre el enlace de verificación en Mailpit.
 3. Descarga o imprime el QR desde el panel.
+
+Para probar los pedidos del cliente (feature 003):
+1. En el panel, pulsa «Abrir la sesión de música» y abre el reproductor (`/panel/reproductor`).
+2. En otro navegador, o en una ventana privada, abre la URL del QR (`/l/<código>`).
+3. Busca cualquier texto y pide una canción: suena en el reproductor.
+
+En local, la búsqueda usa un catálogo falso y el reproductor uno falso, sin YouTube. Para usar YouTube real, pon en `src/.env` `CATALOG_PROVIDER=youtube` y una `YOUTUBE_API_KEY`, y levanta el compose con `VITE_PLAYBACK_PROVIDER=youtube`. Las variables están documentadas en [`src/.env.example`](src/.env.example) y en [`src/backend/README.md`](src/backend/README.md#configuración).
 
 ## Pruebas
 
@@ -143,7 +150,7 @@ La API aplica las migraciones al arrancar, y el servicio `worker` envía los cor
 | Tiempo real: tickets, salas y reenvío contra Redis real | `src/realtime` | `npm test` |
 | Web: componentes | `src/web` | `npm test` |
 | e2e con Playwright y Mailpit | `src/web` | `npx playwright test` (con el compose levantado) |
-| Carga con k6 | `src/perf` | ver [`src/perf/README.md`](src/perf/README.md) |
+| Carga con k6: alta y QR (001), cliente a escala (003) | `src/perf` | ver [`src/perf/README.md`](src/perf/README.md) |
 | Escaneo del QR impreso (manual) | `docs/qa` | [`docs/qa/qr-escaneo.md`](docs/qa/qr-escaneo.md) |
 | Reproductor con YouTube real (manual) | `docs/qa` | [`docs/qa/reproductor-youtube.md`](docs/qa/reproductor-youtube.md) |
 
@@ -156,10 +163,12 @@ El trabajo `ci` agrupa a todos y es el check obligatorio para fusionar en `main`
 
 ## Pendiente
 
-- **Feature 001:** la prueba manual de escaneo del QR impreso con iOS y Android (T023).
-- **Feature 002:** la web (T014–T020): cliente de tiempo real, reproductor con YouTube, tarjeta de la sesión en el panel, e2e y la prueba manual con YouTube real.
+- **Feature 001:** la prueba manual de escaneo del QR impreso con iOS y Android (T023), en un entorno HTTPS.
+- **Feature 002:** la prueba manual con YouTube real en Safari, en un entorno HTTPS, y en Edge.
 - **Feature de infraestructura**, antes del piloto:
   - CloudFront, ALB, RDS, ECS Fargate;
+  - la prueba de carga completa de Q2 de la feature 003 (`ESTABLISHMENTS=50`), con varias tareas de la API. Antes, medir si un pool de conexiones sin desborde reduce el gasto de PostgreSQL (plan de 003, D10);
+  - Redis 7 o posterior en ElastiCache;
   - SES fuera del sandbox, con SPF, DKIM y DMARC;
   - verificar la disponibilidad y el cifrado de extremo a extremo.
 - **Política de tratamiento de datos:** falta el texto definitivo del negocio. Hasta entonces, la aplicación no arranca con `ENV=production`.

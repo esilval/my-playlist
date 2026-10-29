@@ -10,6 +10,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # pruebas, como las credenciales locales de PostgreSQL; producción no arranca con él.
 LOCAL_REALTIME_TICKET_SECRET = "solo-para-desarrollo-local-no-usar-en-produccion"
 MIN_REALTIME_TICKET_SECRET_LENGTH = 32
+# Secreto de desarrollo de la cookie del dispositivo del cliente (feature 003, plan D3).
+# Solo lo usa el monolito; producción no arranca con él.
+LOCAL_DEVICE_TOKEN_SECRET = "solo-para-desarrollo-local-dispositivo-no-usar-en-produccion"
+MIN_DEVICE_TOKEN_SECRET_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -39,6 +43,12 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:5173"
     # Secreto que comparten el monolito y el servicio de tiempo real (ADR-0014).
     realtime_ticket_secret: str = LOCAL_REALTIME_TICKET_SECRET
+    # Catálogo de música (feature 003, plan D1, D8): el falso en local y en pruebas;
+    # YouTube en producción, con su clave.
+    catalog_provider: Literal["youtube", "fake"] = "fake"
+    youtube_api_key: str = ""
+    # Firma de la cookie del dispositivo del cliente (feature 003, plan D3).
+    device_token_secret: str = LOCAL_DEVICE_TOKEN_SECRET
 
     @model_validator(mode="after")
     def _production_sends_with_ses(self) -> "Settings":
@@ -56,6 +66,18 @@ class Settings(BaseSettings):
             raise ValueError(
                 "en producción hace falta REALTIME_TICKET_SECRET propio, de al menos "
                 f"{MIN_REALTIME_TICKET_SECRET_LENGTH} caracteres (ADR-0014)"
+            )
+        if self.env == "production" and self.catalog_provider != "youtube":
+            raise ValueError("en producción el catálogo es YouTube: CATALOG_PROVIDER=youtube")
+        if self.catalog_provider == "youtube" and not self.youtube_api_key.strip():
+            raise ValueError("el catálogo de YouTube necesita YOUTUBE_API_KEY (ADR-0010)")
+        if self.env == "production" and (
+            self.device_token_secret == LOCAL_DEVICE_TOKEN_SECRET
+            or len(self.device_token_secret) < MIN_DEVICE_TOKEN_SECRET_LENGTH
+        ):
+            raise ValueError(
+                "en producción hace falta DEVICE_TOKEN_SECRET propio, de al menos "
+                f"{MIN_DEVICE_TOKEN_SECRET_LENGTH} caracteres"
             )
         return self
 

@@ -213,3 +213,111 @@ def test_migracion_0002_baja_a_0001_y_sube(database_url: str) -> None:
 
     command.upgrade(config, "head")
     assert added <= _public_objects(database_url)
+
+
+# Las columnas de queue_item. Del cliente solo se guarda requested_by: el identificador
+# anónimo de su dispositivo, sin nombre, correo, teléfono ni ubicación (S9).
+QUEUE_ITEM_COLUMNS = {
+    ("id", "uuid", "NO"),
+    ("establishment_id", "uuid", "NO"),
+    ("session_id", "uuid", "NO"),
+    ("position", "bigint", "NO"),
+    ("track_ref", "text", "NO"),
+    ("title", "text", "NO"),
+    ("state", "USER-DEFINED", "NO"),
+    ("failure_reason", "text", "YES"),
+    ("created_at", "timestamp with time zone", "NO"),
+    ("started_at", "timestamp with time zone", "YES"),
+    ("finished_at", "timestamp with time zone", "YES"),
+    ("requested_by", "uuid", "YES"),
+}
+
+
+async def test_F003_R002_queue_item_solo_guarda_el_dispositivo_del_cliente(
+    engine: AsyncEngine,
+) -> None:
+    async with engine.connect() as connection:
+        rows = await connection.execute(
+            text(
+                "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'queue_item'"
+            )
+        )
+        columns = {(name, data_type, nullable) for name, data_type, nullable in rows}
+
+    assert columns == QUEUE_ITEM_COLUMNS
+
+
+async def test_F003_R006_indice_parcial_de_pendientes_por_dispositivo(engine: AsyncEngine) -> None:
+    async with engine.connect() as connection:
+        definition = (
+            await connection.execute(
+                text(
+                    "SELECT indexdef FROM pg_indexes "
+                    "WHERE schemaname = 'public' AND tablename = 'queue_item' "
+                    "AND indexname = 'queue_item_pending_by_device_idx'"
+                )
+            )
+        ).scalar_one()
+
+    assert "(session_id, requested_by)" in definition
+    assert "WHERE (state = 'pending'::queue_item_state)" in definition
+
+
+async def test_F003_R002_la_api_guarda_el_dispositivo_y_rls_lo_aisla(engine: AsyncEngine) -> None:
+    device = uuid.uuid4()
+    async with engine.begin() as connection:
+        a = await _establishment(connection, "AAAAAAAAAA")
+        b = await _establishment(connection, "BBBBBBBBBB")
+        item = await _queue_item(connection, a, await _open_session(connection, a), 1)
+
+    # La API del establecimiento A guarda el dispositivo que pidió la canción…
+    async with engine.begin() as connection:
+        await _as_api(connection, a)
+        stored = await connection.execute(
+            text("UPDATE queue_item SET requested_by = :d WHERE id = :i"), {"d": device, "i": item}
+        )
+        assert stored.rowcount == 1
+
+    count = text("SELECT count(*) FROM queue_item WHERE requested_by = :d")
+    # …y desde B, con RLS, esa canción no existe.
+    async with engine.begin() as connection:
+        await _as_api(connection, b)
+        assert (await connection.execute(count, {"d": device})).scalar_one() == 0
+    async with engine.begin() as connection:
+        await _as_api(connection, a)
+        assert (await connection.execute(count, {"d": device})).scalar_one() == 1
+
+
+def _queue_item_columns_and_indexes(database_url: str) -> set[str]:
+    async def query() -> set[str]:
+        engine = create_async_engine(database_url)
+        try:
+            async with engine.connect() as connection:
+                rows = await connection.execute(
+                    text(
+                        "SELECT 'column:' || column_name FROM information_schema.columns "
+                        "WHERE table_schema = 'public' AND table_name = 'queue_item' "
+                        "UNION ALL "
+                        "SELECT 'index:' || indexname FROM pg_indexes "
+                        "WHERE schemaname = 'public' AND tablename = 'queue_item'"
+                    )
+                )
+                return set(rows.scalars())
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(query())
+
+
+def test_migracion_0003_baja_a_0002_y_sube(database_url: str) -> None:
+    config = alembic_config(database_url)
+    added = {"column:requested_by", "index:queue_item_pending_by_device_idx"}
+
+    command.downgrade(config, "0002_music_sessions")
+    objects = _queue_item_columns_and_indexes(database_url)
+    assert not added & objects
+    assert "column:track_ref" in objects
+
+    command.upgrade(config, "head")
+    assert added <= _queue_item_columns_and_indexes(database_url)

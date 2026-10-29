@@ -85,6 +85,39 @@ async def test_F001_R013_public_establishment_desconocido_devuelve_nada(ctx: Ctx
             assert rows.all() == [], code
 
 
+async def test_F003_R001_public_establishment_id_devuelve_solo_el_identificador(ctx: Ctx) -> None:
+    async with ctx.engine.begin() as connection:
+        ids = await _seed(connection, code="AAAAAAAAAA", email="a@ejemplo.com")
+        await _seed(connection, code="BBBBBBBBBB", email="b@ejemplo.com")
+
+    async with ctx.db.transaction() as connection:
+        result = await connection.execute(
+            text("SELECT * FROM public_establishment_id(:code)"), {"code": "AAAAAAAAAA"}
+        )
+        # Ni el nombre, ni la dirección, ni nada de la cuenta: solo el identificador.
+        assert list(result.keys()) == ["establishment_id"]
+        assert result.all() == [(ids["establishment"],)]
+        # La función de la feature 001 sigue devolviendo solo el nombre.
+        names = await connection.execute(
+            text("SELECT * FROM public_establishment(:code)"), {"code": "AAAAAAAAAA"}
+        )
+        assert list(names.keys()) == ["name"]
+
+
+async def test_F003_R011_public_establishment_id_de_un_codigo_desconocido_o_mal_formado_no_devuelve_nada(  # noqa: E501
+    ctx: Ctx,
+) -> None:
+    async with ctx.engine.begin() as connection:
+        await _seed(connection, code="AAAAAAAAAA", email="a@ejemplo.com")
+
+    async with ctx.db.transaction() as connection:
+        for code in ("ZZZZZZZZZZ", "", "AAAAAAAAA", "AAAAAAAAAAB", "AAAAAAAAAA' OR '1'='1"):
+            rows = await connection.execute(
+                text("SELECT * FROM public_establishment_id(:code)"), {"code": code}
+            )
+            assert rows.all() == [], code
+
+
 async def test_F001_R015_auth_account_by_email_no_expone_otros_campos(ctx: Ctx) -> None:
     async with ctx.engine.begin() as connection:
         ids = await _seed(connection, code="AAAAAAAAAA", email="a@ejemplo.com")
@@ -151,6 +184,7 @@ DEFINER_CALLS = {
     "auth_session": "SELECT * FROM auth_session('\\x00'::bytea)",
     "auth_email_token": "SELECT * FROM auth_email_token('\\x00'::bytea, 'verify')",
     "public_establishment": "SELECT * FROM public_establishment('AAAAAAAAAA')",
+    "public_establishment_id": "SELECT * FROM public_establishment_id('AAAAAAAAAA')",
 }
 
 

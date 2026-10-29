@@ -278,18 +278,7 @@ async def _b_music_session(ctx: Ctx) -> dict[str, Any]:
 
 
 async def _b_music(ctx: Ctx) -> dict[str, list[str]]:
-    rows: dict[str, list[str]] = {}
-    async with ctx.engine.connect() as connection:
-        for table in MUSIC_TABLES:
-            result = await connection.execute(
-                text(
-                    f"SELECT row_to_json(t)::text AS j FROM {table} t WHERE establishment_id = :e "
-                    "ORDER BY j"
-                ),
-                {"e": ctx.ids["b"]},
-            )
-            rows[table] = list(result.scalars())
-    return rows
+    return await _music_rows(ctx, "b")
 
 
 def _assert_nothing_of_b_music(ctx: Ctx, response: httpx2.Response, b: dict[str, Any]) -> None:
@@ -398,3 +387,232 @@ async def test_F002_R013_get_music_session_de_a_no_muestra_lo_que_suena_en_b(ctx
         False,
     )
     _assert_nothing_of_b_music(ctx, own, b)
+
+
+# Feature 003: el cliente que pide desde el QR (R011, plan D3, D5). El establecimiento
+# sale del código de la URL y la cookie del dispositivo tiene que ser de ese mismo.
+
+
+def _public(ctx: Ctx, owner: str, route: str) -> str:
+    return f"/api/public/establishments/{ctx.codes[owner]}/{route}"
+
+
+def _phone(ctx: Ctx) -> httpx2.AsyncClient:
+    """Un móvil nuevo, sin la sesión del propietario. Se cierra con `aclose`."""
+    return httpx2.AsyncClient(
+        transport=ctx.a._transport,
+        base_url="https://api",
+        headers={"X-MyPlaylist-Client": "web", "Origin": PUBLIC_BASE_URL},
+    )
+
+
+async def _arrive(ctx: Ctx, phone: httpx2.AsyncClient, owner: str) -> str:
+    """Abre la página del QR de `owner` y devuelve la cookie de dispositivo que recibió."""
+    response = await phone.get(_public(ctx, owner, "music"))
+    assert response.status_code == 200
+    token = phone.cookies.get("mp_device", path=f"/api/public/establishments/{ctx.codes[owner]}/")
+    assert token
+    return token
+
+
+def _carry_cookie(ctx: Ctx, phone: httpx2.AsyncClient, token: str, owner: str) -> None:
+    """Fuerza la cookie `token` en las rutas de `owner`: el navegador no la mandaría (Path),
+    pero alguien puede copiarla a mano."""
+    phone.cookies.clear()
+    phone.cookies.set("mp_device", token, path=f"/api/public/establishments/{ctx.codes[owner]}/")
+
+
+async def _music_rows(ctx: Ctx, owner: str) -> dict[str, list[str]]:
+    rows: dict[str, list[str]] = {}
+    async with ctx.engine.connect() as connection:
+        for table in MUSIC_TABLES:
+            result = await connection.execute(
+                text(
+                    f"SELECT row_to_json(t)::text AS j FROM {table} t WHERE establishment_id = :e "
+                    "ORDER BY j"
+                ),
+                {"e": ctx.ids[owner]},
+            )
+            rows[table] = list(result.scalars())
+    return rows
+
+
+def _assert_absent(response: httpx2.Response, markers: list[str]) -> None:
+    body = response.text + str(response.headers)
+    leaked = [marker for marker in markers if marker in body]
+    assert leaked == [], (response.request.method, str(response.request.url), leaked)
+
+
+async def test_F003_R011_con_la_cookie_de_a_en_b_es_un_dispositivo_nuevo_con_cupo_completo(
+    ctx: Ctx,
+) -> None:
+    await _b_music_session(ctx)
+    assert (await ctx.a.post("/api/owner/music-session")).status_code == 201
+    async with _phone(ctx) as phone:
+        token_a = await _arrive(ctx, phone, "a")
+        for ref in ("fake:uno-1", "fake:uno-2"):
+            assert (
+                await phone.post(_public(ctx, "a", "requests"), json={"ref": ref})
+            ).status_code == 201
+        a_items = [str(row) for row in await _a_item_ids(ctx)]
+        a_device = await _a_device(ctx)
+
+        _carry_cookie(ctx, phone, token_a, "b")
+        in_b = await phone.get(_public(ctx, "b", "music"))
+
+        # La cookie de A viajó de verdad a B: sin ella, la prueba no probaría nada.
+        assert f"mp_device={token_a}" in in_b.request.headers["cookie"]
+        assert in_b.status_code == 200
+        state = in_b.json()
+        assert (state["mine"], state["quota"]) == ([], {"limit": 5, "free": 5})
+        # B no reconoce la cookie de A: le emite una suya, de otro dispositivo.
+        issued = in_b.headers["set-cookie"]
+        assert issued.startswith("mp_device=")
+        assert f"Path=/api/public/establishments/{ctx.codes['b']}/" in issued
+        token_b = issued.split(";")[0].removeprefix("mp_device=")
+        assert token_b != token_a
+        _carry_cookie(ctx, phone, token_b, "b")
+        a_markers = ["Canción 1 de uno", "Canción 2 de uno", *a_items, a_device, ctx.codes["a"]]
+        _assert_absent(in_b, a_markers)
+
+        # Con la cookie de B pide en B: entra en la cola de B como de otro dispositivo.
+        accepted = await phone.post(_public(ctx, "b", "requests"), json={"ref": "fake:dos-1"})
+        assert accepted.status_code == 201
+        assert [track["title"] for track in accepted.json()["mine"]] == ["Canción 1 de dos"]
+    async with ctx.engine.connect() as connection:
+        devices = (
+            await connection.execute(
+                text(
+                    "SELECT establishment_id, requested_by FROM queue_item "
+                    "WHERE requested_by IS NOT NULL"
+                )
+            )
+        ).all()
+    by_establishment = {(row.establishment_id, row.requested_by) for row in devices}
+    assert len({device for _, device in by_establishment}) == 2
+    assert {establishment for establishment, _ in by_establishment} == {ctx.ids["a"], ctx.ids["b"]}
+
+
+async def _a_device(ctx: Ctx) -> str:
+    """El dispositivo que pidió en A (solo hay uno)."""
+    async with ctx.engine.connect() as connection:
+        result = await connection.execute(
+            text("SELECT DISTINCT requested_by FROM queue_item WHERE establishment_id = :a"),
+            {"a": ctx.ids["a"]},
+        )
+        return str(result.scalar_one())
+
+
+async def _a_item_ids(ctx: Ctx) -> list[UUID]:
+    async with ctx.engine.connect() as connection:
+        result = await connection.execute(
+            text("SELECT id FROM queue_item WHERE establishment_id = :a"), {"a": ctx.ids["a"]}
+        )
+        return list(result.scalars())
+
+
+async def test_F003_R011_un_pedido_en_b_con_la_cookie_de_a_da_401_y_no_cambia_ninguna_cola(
+    ctx: Ctx,
+) -> None:
+    b = await _b_music_session(ctx)
+    assert (await ctx.a.post("/api/owner/music-session")).status_code == 201
+    async with _phone(ctx) as phone:
+        token_a = await _arrive(ctx, phone, "a")
+        assert (
+            await phone.post(_public(ctx, "a", "requests"), json={"ref": "fake:uno-1"})
+        ).status_code == 201
+        a_before = await _music_rows(ctx, "a")
+        b_before = await _music_rows(ctx, "b")
+
+        _carry_cookie(ctx, phone, token_a, "b")
+        # Ni pedir, ni buscar, ni el ticket de tiempo real de B (D6): la cookie no vale.
+        for method, route, body in (
+            ("POST", "requests", {"ref": "fake:uno-2"}),
+            ("POST", "requests", {"ref": "fake:b"}),
+            ("GET", "search?q=uno", None),
+            ("POST", "realtime-ticket", None),
+        ):
+            response = await phone.request(method, _public(ctx, "b", route), json=body)
+            assert f"mp_device={token_a}" in response.request.headers["cookie"]
+            assert (response.status_code, response.json()) == (401, {"error": "device_required"})
+            _assert_absent(response, [B_SONG, "Pendiente de B", str(b["session_id"])])
+            assert "set-cookie" not in response.headers
+
+        # Tampoco con el código de A en la URL y el cuerpo apuntando a B: la ruta es la de A.
+        _carry_cookie(ctx, phone, token_a, "a")
+        own = await phone.post(
+            _public(ctx, "a", f"requests?establishment_id={ctx.ids['b']}"),
+            json={"ref": "fake:uno-1", "establishment_id": str(ctx.ids["b"])},
+        )
+        assert (own.status_code, own.json()) == (409, {"error": "already_queued"})
+
+    assert await _music_rows(ctx, "a") == a_before
+    assert await _music_rows(ctx, "b") == b_before
+
+
+async def test_F003_R011_nadie_ve_los_pedidos_de_otro_dispositivo_ni_de_otro_establecimiento(
+    ctx: Ctx,
+) -> None:
+    b = await _b_music_session(ctx)
+    assert (await ctx.a.post("/api/owner/music-session")).status_code == 201
+    phones = {"a1": _phone(ctx), "a2": _phone(ctx), "b1": _phone(ctx)}
+    owner_of = {"a1": "a", "a2": "a", "b1": "b"}
+    refs = {"a1": ["fake:uno-1", "fake:uno-2"], "a2": ["fake:dos-1"], "b1": ["fake:tres-1"]}
+    titles = {
+        "a1": ["Canción 1 de uno", "Canción 2 de uno"],
+        "a2": ["Canción 1 de dos"],
+        "b1": ["Canción 1 de tres"],
+    }
+    try:
+        for name, phone in phones.items():
+            await _arrive(ctx, phone, owner_of[name])
+            for ref in refs[name]:
+                response = await phone.post(
+                    _public(ctx, owner_of[name], "requests"), json={"ref": ref}
+                )
+                assert response.status_code == 201
+
+        async with ctx.engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        "SELECT id, title, requested_by FROM queue_item "
+                        "WHERE requested_by IS NOT NULL"
+                    )
+                )
+            ).all()
+        by_title = {row.title: row for row in rows}
+        # De cada dispositivo: sus títulos, sus canciones y su identificador.
+        markers = {
+            name: [
+                *titles[name],
+                *(str(by_title[title].id) for title in titles[name]),
+                str(by_title[titles[name][0]].requested_by),
+            ]
+            for name in phones
+        }
+        # Lo de B que no viene de un cliente, que en A no debe verse.
+        b_own = [B_SONG, "Pendiente de B", str(b["session_id"]), *map(str, b["items"].values())]
+
+        for name, phone in phones.items():
+            owner = owner_of[name]
+            others = [marker for other in phones if other != name for marker in markers[other]]
+            if owner == "a":
+                others += b_own
+            # Lo único propio del dispositivo que podría salir es su identificador: tampoco.
+            others.append(markers[name][-1])
+            responses = [
+                await phone.get(_public(ctx, owner, "music")),
+                await phone.get(_public(ctx, owner, "search?q=jazz")),
+                await phone.post(_public(ctx, owner, "realtime-ticket")),
+                # Un pedido rechazado devuelve solo el error.
+                await phone.post(_public(ctx, owner, "requests"), json={"ref": refs[name][0]}),
+            ]
+            assert [response.status_code for response in responses] == [200, 200, 200, 409]
+            for response in responses:
+                _assert_absent(response, others)
+            mine = responses[0].json()["mine"]
+            assert [track["title"] for track in mine] == titles[name]
+    finally:
+        for phone in phones.values():
+            await phone.aclose()

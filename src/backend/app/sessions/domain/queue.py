@@ -48,6 +48,9 @@ class QueueItem:
     # Cuando el reproductor informa de que empezó a sonar, no cuando le tocó.
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    # El dispositivo anónimo que la pidió (feature 003, D4); None si no la pidió un
+    # cliente (la herramienta de desarrollo y, más adelante, el propietario).
+    requested_by: UUID | None = None
 
     @property
     def track(self) -> Track:

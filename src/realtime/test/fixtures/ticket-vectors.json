@@ -19,6 +19,14 @@
       "establishment_id": "6f1c2b4a-8d3e-4f5a-9b7c-1d2e3f4a5b6c",
       "role": "player",
       "ticket_id": "jti-player"
+    },
+    {
+      "name": "cliente",
+      "ticket": "eyJlc3QiOiI2ZjFjMmI0YS04ZDNlLTRmNWEtOWI3Yy0xZDJlM2Y0YTViNmMiLCJleHAiOjE3OTI2MTI4NjAsImp0aSI6Imp0aS1jbGllbnQiLCJyb2xlIjoiY2xpZW50In0.t_KTOSNm48uZRmcGHi0AlEeCgIiYBgk9cE9a8yOGsWY",
+      "now": 1792612830,
+      "establishment_id": "6f1c2b4a-8d3e-4f5a-9b7c-1d2e3f4a5b6c",
+      "role": "client",
+      "ticket_id": "jti-client"
     }
   ],
   "invalid": [

@@ -171,6 +171,11 @@ class AccountsRepository(Protocol):
         """Solo el nombre, por el código del QR, sin sesión (R012, R013)."""
         ...
 
+    async def public_establishment_id(self, public_code: str) -> UUID | None:
+        """Solo el identificador, por el código del QR, sin sesión (feature 003, plan
+        D5): para fijar el contexto de las rutas del cliente."""
+        ...
+
     async def revoke_all_sessions(self, account_id: UUID, now: datetime) -> None: ...
 
     async def find_owner_by_email(self, email_normalized: str) -> AccountRef | None:
