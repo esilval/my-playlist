@@ -25,6 +25,37 @@ terraform test
 
 El CI corre lo mismo en el trabajo `infra` de cada PR que toca `src/infra/`.
 
+## Secretos (D6)
+
+`modules/secrets` crea un secreto de Secrets Manager por valor, con el nombre `myplaylist/<entorno>/<nombre>`. Las tareas de ECS reciben su ARN en `secrets`, nunca su valor.
+
+| Secreto | Quién lo genera | ¿Queda en el estado? | Cómo se rota |
+| ------- | --------------- | -------------------- | ------------ |
+| `realtime-ticket-secret`, `device-token-secret`, `database-api-password`, `database-worker-password` | Terraform: efímero (`random_password`, 48 caracteres) y escrito con `secret_string_wo` | No | Subir su número en `rotation` y volver a desplegar. Las dos contraseñas de la base las vuelve a asignar `app.ops.db_users` en la tarea de migración (D5). |
+| `redis-auth-token` | Terraform, igual que los anteriores | No: al componer el entorno (T017), ElastiCache lo leerá del secreto con un recurso efímero y lo escribirá con `auth_token_wo` | Subir a la vez `rotation["redis-auth-token"]` y `redis_auth_token_version` del módulo de datos. |
+| `youtube-api-key` | Una persona, con `aws secretsmanager put-secret-value` | No: Terraform solo crea el secreto, sin valor | Volver a ejecutar `put-secret-value` y reiniciar las tareas de la API. |
+| Usuario maestro de RDS | RDS (`manage_master_user_password`) | No | Lo rota RDS. |
+
+| `cloudfront-origin-header` | Terraform, igual que los anteriores | **Sí**, en la configuración de CloudFront y en la regla del ALB, que no tienen atributo de solo escritura | Subir su número en `rotation` y desplegar: el módulo de borde (T014) lo lee del secreto y CloudFront y el ALB lo reciben en el mismo `apply`. |
+
+**Lo que sí queda en el estado:** solo la cabecera secreta entre CloudFront y el ALB (D1). Si se filtrara, permitiría llegar al ALB sin pasar por CloudFront, pero nunca dar acceso a los datos.
+
+**Al revisar un PR que toque `src/infra/`:** `terraform test` no ve recursos efímeros ni atributos de solo escritura. El trabajo `infra` del CI falla si encuentra en `modules/` un `resource "random_password"` (dejaría el valor en el estado) o un `secret_string =` (lo escribiría en claro).
+
+## Datos (D4)
+
+- **PostgreSQL:** RDS Multi-AZ con copias de 7 días. En producción tiene protección contra borrado, y al destruirse deja la instantánea `myplaylist-production-final`. Si producción se destruyera otra vez, antes hay que borrar o renombrar esa instantánea.
+- **Redis:** ElastiCache con una réplica. El token de AUTH se escribe con solo escritura (`auth_token_wo`) y no queda en el estado. Para rotarlo, se cambia el secreto y se sube `redis_auth_token_version`. El grupo aplica sus cambios al momento, porque ElastiCache no cambia el token de otro modo.
+
+## Red (D2)
+
+`modules/network` crea una VPC en dos zonas, sin NAT. Las pruebas (`tests/network.tftest.hcl`) comprueban los recursos que nombran, pero no ven uno nuevo. Por eso, al revisar un PR que toque `modules/network/`, hay que comprobar que:
+- no aparece ningún `aws_vpc_security_group_ingress_rule` ni `aws_vpc_security_group_egress_rule` fuera de los que ya hay;
+- no aparece ninguna `aws_route` sobre la tabla privada;
+- no aparece ningún `aws_nat_gateway`.
+
+La regla del ALB con la lista de prefijos de CloudFront cuenta como 55 en la cuota de 60 reglas del grupo: no cabe otra que la use.
+
 ## Lo que impone la organización de AWS (D18)
 
 La cuenta `955519187424` pertenece a la organización de AWS `o-domf4iizxl`, administrada

@@ -218,7 +218,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T010 — Red `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R009
 - **Depende de:** T009
 - **Archivos:**
@@ -231,7 +231,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T011 — Datos: RDS y ElastiCache `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R009, R010
 - **Depende de:** T009
 - **Archivos:**
@@ -245,7 +245,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T012 — Secretos `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R006
 - **Depende de:** T009
 - **Archivos:**
