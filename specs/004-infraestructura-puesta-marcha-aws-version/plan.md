@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-11-09         |
-| Estado | Approved · 47f9b08b2767              |
+| Estado | Approved · 56ecaf99062b              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -122,7 +122,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
   | -------- | ----- | ------ | ----- |
   | `api` | 2 vCPU, 4 GiB, `API_WORKERS=2` | 2 a 6, autoescalado al 60 % de CPU | `uvicorn … --workers 2 --no-access-log` |
   | `worker` | 0,25 vCPU, 0,5 GiB | 2 fijas | `python -m app.worker` |
-  | `realtime` | 0,5 vCPU, 1 GiB | 2 a 4, autoescalado al 60 % de CPU | `node dist/server.js` |
+  | `realtime` | 0,5 vCPU, 1 GiB | 2 a 4, autoescalado al 60 % de CPU | `sh -c 'export REDIS_URL="rediss://:${REDIS_AUTH_TOKEN}@${REDIS_HOST}:${REDIS_PORT}/0" && exec node dist/server.js'` (D6) |
 
   - **Comprobaciones de salud del ALB:** `/api/health` y `/health`. Hay que superar dos seguidas cada 10 s para recibir tráfico.
   - **Despliegues:** con el «deployment circuit breaker» y vuelta atrás automática. Si las tareas nuevas no superan su comprobación de salud, ECS vuelve a la revisión anterior (R005).
@@ -191,7 +191,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
     - **Gestionado por RDS:** la contraseña del usuario maestro (D5).
   - **Quién lee cada valor generado:**
     - el token de Redis: ElastiCache lo lee de su secreto con un recurso efímero (`ephemeral "aws_secretsmanager_secret_version"`) y lo recibe en `auth_token_wo`. Lo une el módulo raíz del entorno (T017), porque un módulo raíz no admite salidas efímeras;
-    - la cabecera de CloudFront: el módulo de borde la lee del secreto (T014) y la pasan CloudFront, como cabecera del origen, y el ALB, en la regla del listener.
+    - la cabecera de CloudFront: la leen del mismo secreto el módulo de cómputo, que la pone en las reglas del listener del ALB (T013), y el de borde, que la pone como cabecera del origen de CloudFront (T014). El módulo raíz los aplica después del de secretos (`depends_on`), para que el secreto ya tenga su versión y una rotación llegue a los dos en el mismo `apply` (T017).
   - **Rotación:** el módulo de secretos recibe un mapa `rotation`, con un número por secreto. Subir el de uno genera un valor nuevo en el siguiente `apply`. Una clave que no sea un secreto generado se rechaza.
   - **Inyección:** ECS los inyecta como variables de entorno al arrancar cada tarea (`secrets` de la definición de tarea), así que no están en las imágenes ni en el repositorio (R006).
   - **Configuración no secreta:**
@@ -202,13 +202,13 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
     - **los dos:** `AWS_REGION=us-east-2`, la región de SES (D14).
 
     Va en la definición de tarea, desde las variables de Terraform.
-  - **`DATABASE_URL` y `REDIS_URL`:** se componen en un arranque de 10 líneas (`app.ops.env`) a partir del anfitrión y del secreto, sin escribir la contraseña en ningún sitio.
+  - **`DATABASE_URL` y `REDIS_URL`:** en la API, el trabajador y la migración se componen en un arranque de 10 líneas (`app.ops.env`) a partir del anfitrión y del secreto, sin escribir la contraseña en ningún sitio. La imagen del tiempo real es de Node y no tiene ese arranque: el mando de su tarea compone `REDIS_URL` con `REDIS_HOST`, `REDIS_PORT` y `REDIS_AUTH_TOKEN` (D3). El token no se escapa, porque solo lleva letras, números y `-_`: ese alfabeto de los secretos generados es un contrato.
 - **Alternativas descartadas:**
   - Parameter Store SecureString: más barato, pero sin rotación ni integración con el usuario maestro gestionado de RDS.
   - Variables de entorno en claro en la definición de tarea: se ven en la consola y en la API de ECS.
 - **Consecuencias:**
   - **Los secretos generados no quedan en el estado de Terraform:** son efímeros y se escriben con atributos de solo escritura, también el token de Redis (`auth_token_wo`). Hace falta, porque el rol de plan lee el estado y lo puede asumir el flujo de cualquier PR de una rama de este repositorio (D16).
-  - **Excepción, la cabecera de CloudFront:** la configuración del origen de CloudFront y la regla del ALB no tienen atributo de solo escritura, así que su valor queda en el estado. Se acepta: si se filtrara, permitiría llegar al ALB sin pasar por CloudFront, pero no da acceso a ningún dato. Se rota igual que los demás, con `rotation`, y CloudFront y el ALB la reciben en el mismo `apply`. `src/infra/README.md` lista qué queda en el estado (T012).
+  - **Excepción, la cabecera de CloudFront:** la configuración del origen de CloudFront y la regla del ALB no tienen atributo de solo escritura, así que su valor queda en el estado. Se acepta: si se filtrara, permitiría llegar al ALB sin pasar por CloudFront, pero no da acceso a ningún dato. Se rota igual que los demás, con `rotation`, y CloudFront y el ALB la reciben en el mismo `apply`. Pero la regla del ALB cambia en segundos y el origen de CloudFront tarda de 5 a 15 minutos en propagarse: mientras tanto, `/api/*` y `/socket.io/*` responden 403. Por eso se rota fuera de las horas de servicio. Una rotación sin corte, con la regla admitiendo los dos valores en dos pasos, queda como mejora posterior. `src/infra/README.md` lista qué queda en el estado (T012).
   - **ADR-0016** dice que el estado guarda las contraseñas que genera Terraform. Con esta decisión no las guarda: solo queda la cabecera. La protección del bucket que pide el ADR se mantiene igual.
   - **El CI lo vigila:** el trabajo `infra` falla si encuentra en `modules/` un `resource "random_password"` o un `secret_string =`, porque `terraform test` no ve los valores efímeros ni los de solo escritura (D16).
   - 7 secretos por entorno, a US$0,40 cada uno.
@@ -477,7 +477,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | Componente | Cambio | Requisitos que cubre |
 | ---------- | ------ | -------------------- |
 | `src/infra/bootstrap/` | Bucket del estado en us-east-2, zona de Route 53, proveedor OIDC (opcional, D18) y roles de despliegue y de plan (D17) | R001, R002 |
-| `src/infra/modules/network` | VPC, subredes en dos zonas y grupos de seguridad (D2) | R009 |
+| `src/infra/modules/network` | VPC, subredes en dos zonas y grupos de seguridad (D2); en preproducción, el puerto SMTP de Mailpit entre las tareas (D13) | R009, R022 |
 | `src/infra/modules/edge` | CloudFront, el certificado del dominio público (us-east-1), el origen del ALB por HTTPS, los alias de Route 53, el bucket de la SPA, la función `edge` (rutas de la SPA y mantenimiento), el KeyValueStore y la política que reenvía `CloudFront-Viewer-Address` (D1, D10, D11) | R003, R014, R015, R020 |
 | `src/infra/modules/data` | RDS Multi-AZ con sus copias y ElastiCache con réplica (D4) | R009, R010 |
 | `src/infra/modules/compute` | Clúster de ECS, ECR, ALB con su listener HTTPS, el certificado del origen (us-east-2) y su registro alias, los servicios, el autoescalado, el «circuit breaker», la tarea de migración, Mailpit y k6 en preproducción (D3, D8, D13) | R003, R004, R005, R009, R017, R022 |
@@ -537,6 +537,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 - **Configuración:**
   - `ENV` admite `local | test | preproduction | production`;
   - `AWS_REGION` vale `us-east-2` si no se da (D14);
+  - **tiempo real:** recibe `REDIS_HOST`, `REDIS_PORT` y `REDIS_AUTH_TOKEN`, y su mando compone `REDIS_URL` (D3, D6);
   - variables nuevas, que las definiciones de tarea de Terraform tienen que usar con estos nombres:
     - **conexión:** `DATABASE_HOST`, `DATABASE_PORT` (5432 por defecto), `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `REDIS_HOST`, `REDIS_PORT` (6379 por defecto) y `REDIS_AUTH_TOKEN`. `app.ops.env` las convierte en `DATABASE_URL` y en `REDIS_URL` (`rediss://`, con TLS) si estas no vienen dadas;
     - **usuarios de la base de datos:** cada servicio recibe en `DATABASE_USER` y `DATABASE_PASSWORD` su propio usuario (`myplaylist_api` o `myplaylist_worker`). La tarea de migración recibe en esas dos el usuario maestro de RDS, y además `DATABASE_API_PASSWORD` y `DATABASE_WORKER_PASSWORD`, las contraseñas que `app.ops.db_users` asigna a los usuarios de servicio (D5).

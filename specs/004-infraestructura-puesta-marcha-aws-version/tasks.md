@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-11-09  |
-| Estado | Approved · de8ad3ec47c4       |
+| Estado | Approved · 82b62f610fc9       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -262,12 +262,13 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T013 — Cómputo: ECS, ECR, ALB y la tarea de migración
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R003, R004, R005, R006, R009
 - **Depende de:** T010, T011, T012
 - **Archivos:**
   - `src/infra/modules/compute/*.tf`
   - `src/infra/tests/compute.tftest.hcl`
+  - `src/infra/README.md` (la sección «Cómputo»)
 - **Hecho cuando:** pasan:
   - `run "F004_R009_cada_servicio_tiene_dos_tareas_o_mas_en_dos_zonas"`;
   - `run "F004_R005_los_servicios_tienen_circuit_breaker_con_vuelta_atras"`;
@@ -276,7 +277,10 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `run "F004_R009_el_alb_solo_admite_cloudfront_y_su_cabecera"`;
   - `run "F004_R003_el_alb_solo_escucha_https_con_el_certificado_del_origen"`: un listener en 443, con TLS 1.2 como mínimo y el certificado de ACM en us-east-2 de `origin.<dominio>`, validado por DNS, y el registro alias del origen al ALB (D1);
   - `run "F004_R008_las_tareas_fijan_aws_region_us_east_2"` (D6, D14);
-  - `run "F004_R001_ecr_tiene_etiquetas_inmutables"`: una versión desplegada siempre es la imagen construida desde su etiqueta.
+  - `run "F004_R001_ecr_tiene_etiquetas_inmutables"`: una versión desplegada siempre es la imagen construida desde su etiqueta;
+  - `run "F004_R006_el_tiempo_real_compone_redis_url_con_tls_y_el_token_al_arrancar"`: el mando de `realtime` compone `rediss://:<token>@<anfitrión>` con el token de `secrets` (D3, D6).
+
+  Mailpit y la tarea de k6 de la preproducción van en T029.
 
 ### T014 — Borde: CloudFront, certificado, la SPA y el mantenimiento
 
@@ -340,8 +344,8 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 ### T017 — Entornos `production` y `preproduction`
 
 - **Estado:** `[ ]`
-- **Requisitos:** R022
-- **Depende de:** T014, T015, T016
+- **Requisitos:** R006, R022
+- **Depende de:** T014, T015, T016, T029
 - **Archivos:**
   - `src/infra/main.tf`
   - `src/infra/variables.tf`
@@ -355,6 +359,10 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `run "F004_R022_preproduccion_tiene_la_tarea_de_k6_y_produccion_no"`;
   - `run "F004_R022_todos_los_recursos_llevan_la_etiqueta_environment"`;
   - `run "F004_R006_redis_recibe_el_token_de_su_secreto_por_solo_escritura"`: el módulo raíz lee el secreto `redis-auth-token` con un recurso efímero y lo pasa a `auth_token_wo` del módulo de datos (D6).
+
+  - `run "F004_R006_computo_y_borde_se_aplican_despues_de_los_secretos"`: los módulos de cómputo y de borde tienen `depends_on = [module.secrets]`, para que lean la cabecera de CloudFront cuando ya tiene versión (D6).
+
+  El módulo de observabilidad pasa al de cómputo sus `log_groups`, con las claves `api`, `worker`, `realtime` y `migrate`, sin `depends_on` entre los dos: los grupos no dependen del cómputo, pero las alarmas sí.
 
   La rotación del token de Redis (subir a la vez `rotation["redis-auth-token"]` y `redis_auth_token_version`) queda en `src/infra/README.md`.
 
@@ -370,6 +378,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `docs/qa/infra-despliegue.md`
 - **Hecho cuando:**
   - actionlint pasa en el CI.
+  - `deploy.yml` registra cada definición de tarea nueva a partir de la última revisión de su familia, cambiando solo la imagen; nunca a partir de la que registró Terraform, que lleva la etiqueta inicial (T013).
   - **El usuario** crea los entornos de GitHub con revisor y la regla de etiquetas `v*` (D17).
   - Tras etiquetar `v0.2.0-rc.1`, quedan con resultado en `docs/qa/infra-despliegue.md`, todos contra la preproducción:
     - `F004_R001`: despliegue aprobado, con la etiqueta, quién aprobó y la hora en GitHub;
@@ -523,10 +532,28 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 - **Depende de:** —
 - **Archivos:**
   - `src/backend/app/shared/config.py`
+  - `src/backend/app/shared/email/ses.py`
   - `src/backend/tests/unit/test_config.py`
+  - `src/backend/tests/unit/test_email.py`
 - **Hecho cuando:**
   - `aws_region` vale `us-east-2` por defecto, como fija ADR-0019 (D14).
   - Pasa `test_F004_R008_la_region_de_ses_por_defecto_es_us_east_2`, que comprueba el valor por defecto y que `AWS_REGION` lo sigue cambiando.
+
+### T029 — Preproducción: Mailpit y la tarea de k6
+
+- **Estado:** `[ ]`
+- **Requisitos:** R017, R022
+- **Depende de:** T013
+- **Archivos:**
+  - `src/infra/modules/compute/*.tf`
+  - `src/infra/modules/network/*.tf`
+  - `src/infra/tests/compute.tftest.hcl`
+  - `src/infra/tests/network.tftest.hcl`
+- **Hecho cuando:** con `production = false` (D13), pasan:
+  - `run "F004_R022_preproduccion_tiene_mailpit_por_service_connect"`: un servicio Mailpit de una tarea, con Service Connect en el clúster, al que la API y el trabajador llegan por nombre (`SMTP_HOST`), sin pasar por el ALB;
+  - `run "F004_R022_el_puerto_smtp_solo_se_abre_entre_las_tareas_en_preproduccion"`: la regla del puerto SMTP referencia el grupo de las tareas, y en producción no existe;
+  - `run "F004_R017_preproduccion_tiene_la_definicion_de_k6"`: una definición de tarea de 4 vCPU y 8 GiB con `grafana/k6` en una versión fija, que no es un servicio;
+  - `run "F004_R022_produccion_no_tiene_mailpit_ni_k6"`.
 
 ## Cobertura
 
@@ -548,11 +575,11 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 | R014 | T014, T020 |
 | R015 | T020 |
 | R016 | T003, T006, T008, T016, T022, T027 |
-| R017 | T019 |
+| R017 | T019, T029 |
 | R018 | T024 |
 | R019 | T024 |
 | R020 | T003, T014, T016, T022 |
 | R021 | T005, T016, T022 |
-| R022 | T001, T011, T012, T017, T019 |
+| R022 | T001, T011, T012, T017, T019, T029 |
 
 > Todo requisito MUST debe tener al menos una tarea.
