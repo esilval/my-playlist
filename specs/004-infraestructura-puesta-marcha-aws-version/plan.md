@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-11-09         |
-| Estado | Approved · 9f157f6b263d              |
+| Estado | Approved · 47f9b08b2767              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -49,17 +49,17 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | ADR-0003: una SPA React con Vite | La SPA se compila con `vite build` y se sirve desde S3 a través de CloudFront (D1). |
 | ADR-0004: PostgreSQL y Redis | RDS PostgreSQL 16, la misma versión mayor del compose, y ElastiCache Redis OSS 7.1. Redis 7 o posterior es lo que pide `EXPIRE NX` (D4). |
 | ADR-0005: Socket.IO y pub/sub en Redis | El cliente usa solo WebSocket (`transports: ["websocket"]`), así que no hacen falta sesiones pegajosas en el ALB. Cada tarea de C6 se suscribe al canal y entrega a sus propias conexiones (D3). |
-| ADR-0019 (propuesta): AWS con contenedores y correo en us-east-2 | Toda la topología está en D1 a D4, en us-east-2. Hay al menos dos tareas por servicio, en dos zonas. El certificado de CloudFront va en us-east-1, con un proveedor de Terraform con alias (D18). |
+| ADR-0019: AWS con contenedores y correo en us-east-2 | Toda la topología está en D1 a D4, en us-east-2. Hay al menos dos tareas por servicio, en dos zonas. El certificado de CloudFront va en us-east-1, con un proveedor de Terraform con alias (D18); el del origen del ALB, en us-east-2 (D1). |
 | ADR-0007: autenticación propia | Sin cambios. Las cookies `Secure` ya exigen HTTPS, que da CloudFront (D1). |
 | ADR-0009: RLS | Los usuarios de conexión no tienen `BYPASSRLS` (D5). |
 | ADR-0010: YouTube | Producción usa YouTube. La alarma de cuota (R021) cuenta las unidades que gasta cada llamada (D11). |
-| ADR-0019 (propuesta): correo con SES en us-east-2 | SES en us-east-2, con el dominio verificado, DKIM y un MAIL FROM propio (D14). |
+| ADR-0019: correo con SES en us-east-2 | SES en us-east-2, con el dominio verificado, DKIM y un MAIL FROM propio. La aplicación usa us-east-2 por defecto y las tareas lo fijan con `AWS_REGION` (D14). |
 | ADR-0013: código bajo `src/` | `src/infra/`. |
 | ADR-0014: ticket de tiempo real | `REALTIME_TICKET_SECRET` está en Secrets Manager y es el mismo para la API, el trabajador y C6 (D6). |
 | ADR-0015: varios procesos | `API_WORKERS` es igual a las vCPU de la tarea (2). Las conexiones caben en `max_connections` de RDS (D3, D4). |
-| ADR-0016 (propuesta): Terraform | `src/infra/`, con un estado por entorno y `terraform test` en el CI. |
-| ADR-0017 (propuesta): GitHub Actions con aprobación y OIDC | `deploy.yml`, `preproduction.yml` y `maintenance.yml` (D9, D13, D14). |
-| ADR-0018 (propuesta): CloudWatch | Registros JSON con EMF, comprobaciones de salud de Route 53, alarmas con SNS y Contributor Insights (D11, D12). |
+| ADR-0016: Terraform | `src/infra/`, con un estado por entorno y `terraform test` en el CI. Su consecuencia sobre las contraseñas en el estado no se da: los secretos generados son efímeros y de solo escritura, y solo queda la cabecera de CloudFront (D6). |
+| ADR-0017: GitHub Actions con aprobación y OIDC | `deploy.yml`, `preproduction.yml` y `maintenance.yml` (D9, D13, D14). |
+| ADR-0018: CloudWatch | Registros JSON con EMF, comprobaciones de salud de Route 53, alarmas con SNS y Contributor Insights (D11, D12). |
 | S1: capas | Las métricas de la aplicación pasan por un puerto `Metrics` del dominio compartido, que implementa la infraestructura (D11). |
 | S5: la difusión solo escucha | C6 solo añade métricas de lo que reenvía. La API añade `published_at` a los eventos, sin cambiar su significado (D11). |
 | S6: los frontales no acceden a los almacenes | Sin cambios: la SPA sigue usando solo la API y el tiempo real, bajo el mismo origen. |
@@ -83,14 +83,18 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
     La distribución **no** tiene respuestas de error personalizadas: en CloudFront valen para todos los orígenes, y convertirían en `index.html` con 200 los 404 y 403 de la API, como el `404 not_found` de un establecimiento que no existe (R013 de 001).
   - **HTTPS:** el comportamiento por defecto es `redirect-to-https`, con TLS 1.2 como mínimo (R003).
-  - **Acceso al ALB:** es público, pero su grupo de seguridad solo admite la lista de prefijos gestionada de CloudFront. Además, el listener exige una cabecera secreta que solo pone CloudFront; sin ella, responde 403.
-  - **Preproducción:** `pre.myplaylist.200oklabs.com`, con la misma definición.
+  - **Acceso al ALB:** es público, pero su grupo de seguridad solo admite la lista de prefijos gestionada de CloudFront, en el puerto 443. Además, el listener exige una cabecera secreta que solo pone CloudFront; sin ella, responde 403.
+  - **De CloudFront al ALB, también HTTPS:** el ALB solo escucha en 443, con un certificado de ACM en us-east-2 para un nombre de origen propio, `origin.myplaylist.200oklabs.com`, validado por DNS en la zona y con un registro alias al ALB. CloudFront apunta a ese nombre con `https-only` y TLS 1.2. Así la cabecera secreta, las cookies y los datos no viajan en claro entre CloudFront y el ALB.
+  - **Preproducción:** `pre.myplaylist.200oklabs.com` y `origin.pre.myplaylist.200oklabs.com`, con la misma definición.
 - **Alternativas descartadas:**
   - Respuestas de error personalizadas (404 → `index.html`): son lo habitual para una SPA en S3, pero afectan también a las respuestas de la API.
+  - HTTP entre CloudFront y el ALB: ahorra el certificado del origen, pero la cabecera secreta y las cookies de sesión cruzarían internet en claro.
+  - HTTPS contra el nombre `*.elb.amazonaws.com` del ALB: CloudFront exige que el certificado del origen coincida con su nombre, y en ese dominio no se puede emitir uno propio.
   - `api.myplaylist…` en un subdominio aparte: rompería el mismo origen, obligaría a CORS con credenciales y a cambiar la cookie y la comprobación de `Origin`.
   - Servir la SPA desde la API: mezcla estáticos y API en las mismas tareas y pierde la caché de CloudFront.
 - **Consecuencias:**
   - Todo pasa por CloudFront, incluido el WebSocket.
+  - Hay dos certificados por entorno: el del dominio público en us-east-1, para CloudFront, y el del origen en us-east-2, para el ALB. Los dos son gratuitos y ACM los renueva solo.
   - CloudFront corta una conexión WebSocket inactiva a los 10 minutos. Socket.IO envía un latido cada 25 s, así que no llega a pasar.
   - Cambiar la dirección obliga a reimprimir los QR.
 
@@ -181,17 +185,21 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 ### D6 — Secretos y configuración
 
 - **Decisión:**
-  - **Los secretos viven en Secrets Manager**, uno por valor y por entorno:
-    - `REALTIME_TICKET_SECRET`, `DEVICE_TOKEN_SECRET`, el token de Redis y las contraseñas de los usuarios de servicio. Los genera Terraform con un recurso **efímero** (`ephemeral "random_password"`, 48 caracteres) y los guarda con el atributo de **solo escritura** `secret_string_wo` de `aws_secretsmanager_secret_version`. Así no quedan en el estado de Terraform (ver Consecuencias);
-    - las contraseñas de los dos usuarios de los servicios; la del usuario maestro la gestiona RDS (D5);
-    - `YOUTUBE_API_KEY`, que el administrador introduce una vez con `aws secretsmanager put-secret-value`;
-    - la cabecera secreta entre CloudFront y el ALB.
+  - **Los secretos viven en Secrets Manager**, uno por valor y por entorno, con el nombre `myplaylist/<entorno>/<nombre>`:
+    - **Generados por Terraform:** `REALTIME_TICKET_SECRET`, `DEVICE_TOKEN_SECRET`, el token de Redis, las contraseñas de los dos usuarios de servicio y la cabecera secreta entre CloudFront y el ALB. Se generan con un recurso **efímero** (`ephemeral "random_password"`, 48 caracteres de letras, números y `-_`) y se guardan con el atributo de **solo escritura** `secret_string_wo` de `aws_secretsmanager_secret_version`;
+    - **Introducido por una persona:** `YOUTUBE_API_KEY`, una vez, con `aws secretsmanager put-secret-value`. Terraform crea el secreto sin valor;
+    - **Gestionado por RDS:** la contraseña del usuario maestro (D5).
+  - **Quién lee cada valor generado:**
+    - el token de Redis: ElastiCache lo lee de su secreto con un recurso efímero (`ephemeral "aws_secretsmanager_secret_version"`) y lo recibe en `auth_token_wo`. Lo une el módulo raíz del entorno (T017), porque un módulo raíz no admite salidas efímeras;
+    - la cabecera de CloudFront: el módulo de borde la lee del secreto (T014) y la pasan CloudFront, como cabecera del origen, y el ALB, en la regla del listener.
+  - **Rotación:** el módulo de secretos recibe un mapa `rotation`, con un número por secreto. Subir el de uno genera un valor nuevo en el siguiente `apply`. Una clave que no sea un secreto generado se rechaza.
   - **Inyección:** ECS los inyecta como variables de entorno al arrancar cada tarea (`secrets` de la definición de tarea), así que no están en las imágenes ni en el repositorio (R006).
   - **Configuración no secreta:**
     - **producción:**
       - `ENV=production`, `EMAIL_BACKEND=ses`, `CATALOG_PROVIDER=youtube` y `PUBLIC_BASE_URL=https://myplaylist.200oklabs.com`;
       - `EMAIL_FROM=MyPlaylist <no-responder@myplaylist.200oklabs.com>` y `DATA_POLICY_VERSION`;
-    - **preproducción:** `ENV=preproduction`, `CATALOG_PROVIDER=fake` y `EMAIL_BACKEND=smtp` hacia Mailpit (D13).
+    - **preproducción:** `ENV=preproduction`, `CATALOG_PROVIDER=fake` y `EMAIL_BACKEND=smtp` hacia Mailpit (D13);
+    - **los dos:** `AWS_REGION=us-east-2`, la región de SES (D14).
 
     Va en la definición de tarea, desde las variables de Terraform.
   - **`DATABASE_URL` y `REDIS_URL`:** se componen en un arranque de 10 líneas (`app.ops.env`) a partir del anfitrión y del secreto, sin escribir la contraseña en ningún sitio.
@@ -199,10 +207,11 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
   - Parameter Store SecureString: más barato, pero sin rotación ni integración con el usuario maestro gestionado de RDS.
   - Variables de entorno en claro en la definición de tarea: se ven en la consola y en la API de ECS.
 - **Consecuencias:**
-  - **Los secretos generados no quedan en el estado de Terraform:** son efímeros y se escriben con atributos de solo escritura. Hace falta, porque el rol de plan lee el estado y lo puede asumir el flujo de cualquier PR de una rama de este repositorio (D16).
-  - **Excepción, el token de Redis:** quien lo usa como valor normal (`auth_token` del grupo de replicación de ElastiCache) lo guarda en el estado si el recurso no tiene variante de solo escritura. T012 comprueba recurso por recurso qué valores quedan en el estado y los lista en `src/infra/README.md`. Si queda alguno, se fija y se rota a mano con la CLI, fuera de Terraform.
-  - **Rotar un secreto efímero** exige subir a mano su `secret_string_wo_version`.
-  - Unos 8 secretos por entorno, a US$0,40 cada uno.
+  - **Los secretos generados no quedan en el estado de Terraform:** son efímeros y se escriben con atributos de solo escritura, también el token de Redis (`auth_token_wo`). Hace falta, porque el rol de plan lee el estado y lo puede asumir el flujo de cualquier PR de una rama de este repositorio (D16).
+  - **Excepción, la cabecera de CloudFront:** la configuración del origen de CloudFront y la regla del ALB no tienen atributo de solo escritura, así que su valor queda en el estado. Se acepta: si se filtrara, permitiría llegar al ALB sin pasar por CloudFront, pero no da acceso a ningún dato. Se rota igual que los demás, con `rotation`, y CloudFront y el ALB la reciben en el mismo `apply`. `src/infra/README.md` lista qué queda en el estado (T012).
+  - **ADR-0016** dice que el estado guarda las contraseñas que genera Terraform. Con esta decisión no las guarda: solo queda la cabecera. La protección del bucket que pide el ADR se mantiene igual.
+  - **El CI lo vigila:** el trabajo `infra` falla si encuentra en `modules/` un `resource "random_password"` o un `secret_string =`, porque `terraform test` no ve los valores efímeros ni los de solo escritura (D16).
+  - 7 secretos por entorno, a US$0,40 cada uno.
 
 ### D7 — La aplicación valida la configuración de cada entorno
 
@@ -391,6 +400,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
   - **MAIL FROM:** `mail.myplaylist.200oklabs.com`, con su MX y su registro SPF.
   - **DMARC:** `p=quarantine` en `_dmarc.myplaylist.200oklabs.com`.
   - **Remitente:** `no-responder@myplaylist.200oklabs.com`.
+  - **Región:** us-east-2 (ADR-0019). La configuración de la aplicación (`aws_region` en `app/shared/config.py`) pasa a tener us-east-2 por defecto, en lugar de us-east-1, y las definiciones de tarea fijan además `AWS_REGION=us-east-2` (D6). Las dos cosas: el valor por defecto evita que un olvido envíe a una región donde la identidad no existe, y la variable explícita deja la región a la vista en la definición de tarea.
   - **Avisos de SES:** los rebotes y las quejas van al mismo tema de avisos (D12).
   - **Salida del sandbox:** se pide una vez a AWS, de forma manual. Es un requisito previo de la puesta en marcha (R008).
 - **Alternativas descartadas:** un remitente en el dominio raíz `200oklabs.com`: la reputación del correo quedaría compartida con cualquier otro uso del dominio.
@@ -468,10 +478,10 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | ---------- | ------ | -------------------- |
 | `src/infra/bootstrap/` | Bucket del estado en us-east-2, zona de Route 53, proveedor OIDC (opcional, D18) y roles de despliegue y de plan (D17) | R001, R002 |
 | `src/infra/modules/network` | VPC, subredes en dos zonas y grupos de seguridad (D2) | R009 |
-| `src/infra/modules/edge` | CloudFront, el certificado, los alias de Route 53, el bucket de la SPA, la función `edge` (rutas de la SPA y mantenimiento), el KeyValueStore y la política que reenvía `CloudFront-Viewer-Address` (D1, D10, D11) | R003, R014, R015, R020 |
+| `src/infra/modules/edge` | CloudFront, el certificado del dominio público (us-east-1), el origen del ALB por HTTPS, los alias de Route 53, el bucket de la SPA, la función `edge` (rutas de la SPA y mantenimiento), el KeyValueStore y la política que reenvía `CloudFront-Viewer-Address` (D1, D10, D11) | R003, R014, R015, R020 |
 | `src/infra/modules/data` | RDS Multi-AZ con sus copias y ElastiCache con réplica (D4) | R009, R010 |
-| `src/infra/modules/compute` | Clúster de ECS, ECR, ALB, los servicios, el autoescalado, el «circuit breaker», la tarea de migración, Mailpit y k6 en preproducción (D3, D8, D13) | R004, R005, R009, R017, R022 |
-| `src/infra/modules/secrets` | Secretos y su inyección (D6) | R006, R007 |
+| `src/infra/modules/compute` | Clúster de ECS, ECR, ALB con su listener HTTPS, el certificado del origen (us-east-2) y su registro alias, los servicios, el autoescalado, el «circuit breaker», la tarea de migración, Mailpit y k6 en preproducción (D3, D8, D13) | R003, R004, R005, R009, R017, R022 |
+| `src/infra/modules/secrets` | Secretos generados, efímeros y de solo escritura, y su rotación (D6) | R006, R007, R022 |
 | `src/infra/modules/email` | Identidad de SES, DKIM, MAIL FROM y DMARC (D14) | R008 |
 | `src/infra/modules/observability` | Grupos de registros de 30 días, alarmas, tema de SNS, comprobaciones de Route 53, Contributor Insights y el panel (D12) | R011, R012, R013, R016, R020, R021 |
 | `src/infra/environments/{production,preproduction}` | Variables y estado de cada entorno | R022 |
@@ -480,7 +490,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | `.github/workflows/preproduction.yml` | Levantar, desplegar, probar la carga y destruir la preproducción (D13) | R017, R022 |
 | `.github/workflows/maintenance.yml` | Retirar y volver (D10) | R014, R015 |
 | `.github/workflows/infra.yml`, `.github/workflows/ci.yml` | Plan y `apply` de la infraestructura; el trabajo `infra` (D9, D16) | R001 |
-| `src/backend/app/shared/config.py` | `ENV=preproduction`, validaciones nuevas y `settings_or_exit()`, que comparten la API y el trabajador (D7) | R007, R016, R022 |
+| `src/backend/app/shared/config.py` | `ENV=preproduction`, validaciones nuevas y `settings_or_exit()`, que comparten la API y el trabajador (D7); `aws_region` en us-east-2 por defecto (D14) | R007, R008, R016, R022 |
 | `src/backend/app/shared/observability.py` | Middleware de registro por petición y formato EMF (D11) | R011, R016, R020 |
 | `src/backend/app/shared/metrics.py`, `src/backend/app/shared/infrastructure/emf.py` | Puerto `Metrics` y su implementación en memoria; la implementación EMF, en infraestructura (D11) | R011 |
 | `src/backend/app/sessions/application/` (eventos del reproductor), `src/backend/app/sessions/domain/{music_session,queue}.py`, `src/backend/app/sessions/infrastructure/repositories.py`, `src/backend/migrations/versions/0005_player_claimed_at.py` | `TrackStarted`, `TrackFailed` y `TrackGap` por el puerto; `created_at` de cada canción y `player_claimed_at` de la sesión (D11) | R011 |
@@ -526,6 +536,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 - **C6:** `GET /socket.io/health` responde `200 {"status": "ok"}`, igual que `/health`. Cada 60 s escribe la línea EMF de `Connections`, `EventsRelayed`, `RelayDelay` y `RedisErrors`.
 - **Configuración:**
   - `ENV` admite `local | test | preproduction | production`;
+  - `AWS_REGION` vale `us-east-2` si no se da (D14);
   - variables nuevas, que las definiciones de tarea de Terraform tienen que usar con estos nombres:
     - **conexión:** `DATABASE_HOST`, `DATABASE_PORT` (5432 por defecto), `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `REDIS_HOST`, `REDIS_PORT` (6379 por defecto) y `REDIS_AUTH_TOKEN`. `app.ops.env` las convierte en `DATABASE_URL` y en `REDIS_URL` (`rediss://`, con TLS) si estas no vienen dadas;
     - **usuarios de la base de datos:** cada servicio recibe en `DATABASE_USER` y `DATABASE_PASSWORD` su propio usuario (`myplaylist_api` o `myplaylist_worker`). La tarea de migración recibe en esas dos el usuario maestro de RDS, y además `DATABASE_API_PASSWORD` y `DATABASE_WORKER_PASSWORD`, las contraseñas que `app.ops.db_users` asigna a los usuarios de servicio (D5).
@@ -647,12 +658,12 @@ classDiagram
 | --------- | -------------- | ---------- |
 | R001 | entorno: despliegue de `v0.2.0` con aprobación y registro; repetición desde otro equipo | `docs/qa/infra-despliegue.md` |
 | R002 | entorno: lanzar `deploy.yml` desde una rama y sin aprobación; prueba del plan: la confianza del rol de despliegue y la del de plan | `docs/qa/infra-despliegue.md`, `src/infra/tests/bootstrap.tftest.hcl` |
-| R003 | plan: `redirect-to-https`, TLS 1.2, certificado y sin respuestas de error personalizadas; unitaria: la función `edge` reescribe solo las rutas de la SPA; entorno: `curl` por HTTP y por HTTPS | `src/infra/tests/edge.tftest.hcl`, `src/infra/modules/edge/functions/edge.test.js`, `docs/qa/infra-despliegue.md` |
+| R003 | plan: `redirect-to-https`, TLS 1.2, certificado, sin respuestas de error personalizadas, y CloudFront habla con el ALB por HTTPS y el ALB solo escucha en 443; unitaria: la función `edge` reescribe solo las rutas de la SPA; entorno: `curl` por HTTP y por HTTPS | `src/infra/tests/edge.tftest.hcl`, `src/infra/tests/compute.tftest.hcl`, `src/infra/modules/edge/functions/edge.test.js`, `docs/qa/infra-despliegue.md` |
 | R004 | unitaria: el mando de producción de la imagen no migra; entorno: una sola migración en los registros, la revisión de la cabeza y la primera migración en una base RDS nueva | `src/backend/tests/unit/test_dockerfile.py`, `docs/qa/infra-despliegue.md` |
 | R005 | entorno (preproducción): una migración que falla a propósito y una versión sin comprobación de salud | `docs/qa/infra-resiliencia.md` |
 | R006 | entorno: buscar los valores de los secretos en las imágenes (`docker history`, `inspect`), en los registros y en el repositorio (gitleaks) | `docs/qa/infra-despliegue.md` |
 | R007 | unitaria: validaciones de `production` y `preproduction` en la API y en C6; entorno: despliegue con un secreto de desarrollo | `src/backend/tests/unit/test_config.py`, `src/realtime/test/server.test.ts`, `docs/qa/infra-resiliencia.md` |
-| R008 | entorno: correo de verificación a Gmail y a Outlook, y sus cabeceras | `docs/qa/infra-navegadores.md` |
+| R008 | unitaria: la región por defecto de SES es us-east-2; entorno: correo de verificación a Gmail y a Outlook, y sus cabeceras | `src/backend/tests/unit/test_config.py`, `docs/qa/infra-navegadores.md` |
 | R009 | plan: Multi-AZ, réplica de Redis y dos o más tareas; entorno (preproducción): parar tareas y forzar la conmutación de RDS bajo tráfico | `src/infra/tests/data.tftest.hcl`, `docs/qa/infra-resiliencia.md` |
 | R010 | plan: retención de 7 días; entorno: restaurar a un momento dado en una instancia aparte | `src/infra/tests/data.tftest.hcl`, `docs/qa/infra-resiliencia.md` |
 | R011 | unitaria: middleware, EMF, `TrackGap` y métricas de C6; plan: alarmas; entorno: el panel muestra cada cifra | `src/backend/tests/unit/test_observability.py`, `src/backend/tests/integration/test_track_metrics.py`, `src/realtime/test/metrics.test.ts`, `src/infra/tests/observability.tftest.hcl`, `docs/qa/infra-operacion.md` |
@@ -670,7 +681,7 @@ classDiagram
 
 ## Coste estimado
 
-Son precios de lista bajo demanda en us-east-1, que coinciden o casi con los de us-east-2 (ADR-0019), que yo recuerdo y no he calculado todavía con la calculadora oficial. Son el orden de magnitud con el que se aprueba el plan. La primera tarea de infraestructura los comprueba con AWS Pricing Calculator y deja las cifras comprobadas en `src/infra/README.md`. Si el total se aparta más de un 20 % de esta tabla, se avisa al usuario antes de seguir.
+Son el orden de magnitud con el que se aprobó el plan: precios de lista bajo demanda en us-east-1, que coinciden o casi con los de us-east-2 (ADR-0019). T009 los comprobó con la API de precios de AWS (`aws pricing get-products`) en us-east-2, y el total comprobado, unos US$435 a 440 al mes, queda dentro del 20 % de esta tabla. Las cifras comprobadas están en `src/infra/README.md`, «Coste».
 
 | Recurso | Producción, en reposo (US$/mes) |
 | ------- | ------------------------------- |
