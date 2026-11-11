@@ -44,7 +44,8 @@ class Settings(BaseSettings):
     email_from: str = "MyPlaylist <no-responder@example.com>"
     smtp_host: str = "localhost"
     smtp_port: int = 1025
-    aws_region: str = "us-east-1"
+    # La región de SES (ADR-0019, feature 004 plan D14); las tareas la fijan con AWS_REGION.
+    aws_region: str = "us-east-2"
     # Versión vigente de la política de tratamiento (plan D12); la de borrador hasta que
     # llegue el texto del negocio.
     data_policy_version: str = "0000-borrador"

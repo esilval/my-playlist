@@ -518,7 +518,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T028 — La región de SES por defecto es us-east-2 `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R008
 - **Depende de:** —
 - **Archivos:**

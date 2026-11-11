@@ -28,6 +28,7 @@ def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "YOUTUBE_API_KEY",
         "REALTIME_TICKET_SECRET",
         "DEVICE_TOKEN_SECRET",
+        "AWS_REGION",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -119,6 +120,16 @@ def test_F004_R022_preproduction_admite_el_catalogo_falso_smtp_y_la_politica_en_
     assert _preproduction(email_from="MyPlaylist <no-responder@example.com>").env == (
         "preproduction"
     )
+
+
+def test_F004_R008_la_region_de_ses_por_defecto_es_us_east_2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _settings().aws_region == "us-east-2"
+    assert _production().aws_region == "us-east-2"
+
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    assert _settings().aws_region == "us-west-2"
 
 
 def test_F004_R016_settings_or_exit_escribe_solo_los_mensajes_y_termina_con_1(
