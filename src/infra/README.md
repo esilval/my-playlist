@@ -106,7 +106,8 @@ Lo que no se puede automatizar, en este orden:
 
 | Paso | Fecha | Quién | Resultado |
 | ---- | ----- | ----- | --------- |
-| 2. Arranque y servidores de nombres | | | pendiente |
+| 2. Arranque | 2026-11-11 | El usuario, con el perfil `myplaylist` | Aplicado: 12 recursos, sin el proveedor OIDC. Zona `Z0639081273LJQWTITRKS`. Estado migrado a `s3://myplaylist-200oklabs-terraform-state/bootstrap/terraform.tfstate`, y `terraform plan` no encuentra diferencias. |
+| 2. Servidores de nombres | 2026-11-11 | El usuario, en el registrador | Delegados: `dig NS 200oklabs.com` devuelve `ns-493.awsdns-61.com`, `ns-810.awsdns-37.net`, `ns-1031.awsdns-00.org` y `ns-1779.awsdns-30.co.uk`. |
 | 3. Salida del sandbox de SES | | | pendiente |
 
 ## Arranque
