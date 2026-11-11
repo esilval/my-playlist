@@ -30,3 +30,11 @@ src/web/coverage/
 # Servicio de tiempo real
 src/realtime/dist/
 src/realtime/coverage/
+
+# Infraestructura (Terraform, ADR-0016): el estado vive en S3 y nunca se versiona.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log

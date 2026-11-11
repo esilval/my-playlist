@@ -16,6 +16,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       web: ${{ steps.filter.outputs.web }}
       realtime: ${{ steps.filter.outputs.realtime }}
+      infra: ${{ steps.filter.outputs.infra }}
       web-exists: ${{ steps.web.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +36,9 @@ jobs:
               - '.github/workflows/ci.yml'
             realtime:
               - 'src/realtime/**'
+              - '.github/workflows/ci.yml'
+            infra:
+              - 'src/infra/**'
               - '.github/workflows/ci.yml'
 
   backend:
@@ -218,12 +222,40 @@ jobs:
           docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.28.0
           git /repo --config /repo/.gitleaks.toml --redact --no-banner
 
+  # Infraestructura como código (feature 004, ADR-0016, plan D16): formato, validación y
+  # pruebas del plan con el proveedor de AWS simulado, sin tocar AWS.
+  infra:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/infra
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versión de Terraform
+        id: version
+        run: echo "terraform=$(cat .terraform-version)" >> "$GITHUB_OUTPUT"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ steps.version.outputs.terraform }}
+      - run: terraform fmt -check -recursive
+      - name: Validar el arranque
+        working-directory: src/infra/bootstrap
+        run: |
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform validate
+      - name: terraform test
+        run: |
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform test
+
   # El check obligatorio de main (protección de rama). Los demás trabajos se saltan
   # cuando no cambia su carpeta; un trabajo saltado cuenta como bueno, uno que falla o se
   # cancela, no.
   ci:
     if: always()
-    needs: [changes, backend, backend-integration, web, realtime, api-types, trace, secrets]
+    needs: [changes, backend, backend-integration, web, realtime, infra, api-types, trace, secrets]
     runs-on: ubuntu-latest
     steps:
       - name: Todos los trabajos pasaron o se saltaron
