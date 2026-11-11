@@ -1,11 +1,12 @@
 """Configuración del monolito, leída de variables de entorno."""
 
+import sys
 from email.utils import parseaddr
 from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import model_validator
+from pydantic import ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Secreto de desarrollo para los tickets de tiempo real (ADR-0014). Sirve en local y en
@@ -108,3 +109,16 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def settings_or_exit() -> Settings:
+    """La configuración, o fin del proceso con código 1 y solo los mensajes de error.
+
+    El error de pydantic incluye la entrada, y con ella los secretos (feature 004, R016,
+    plan D7): la API y el trabajador arrancan con esta función para no escribirlos."""
+    try:
+        return get_settings()
+    except ValidationError as error:
+        messages = "; ".join(str(item["msg"]) for item in error.errors(include_input=False))
+        sys.stderr.write(f"configuración inválida: {messages}\n")
+        raise SystemExit(1) from None

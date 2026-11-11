@@ -1,13 +1,11 @@
 """Punto de entrada de la API del monolito."""
 
-import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
 
 from app.accounts.api import auth, owner, public
 from app.accounts.application.confirm_password_reset import ConfirmPasswordReset
@@ -49,7 +47,7 @@ from app.sessions.application.request_track import RequestTrack
 from app.sessions.infrastructure.redis_publisher import RedisEventPublisher
 from app.sessions.infrastructure.repositories import SqlSessionsUnitOfWork
 from app.shared.clock import SystemClock
-from app.shared.config import Settings, get_settings
+from app.shared.config import Settings, get_settings, settings_or_exit
 from app.shared.csrf import CsrfMiddleware, HstsMiddleware
 from app.shared.db import Database
 from app.shared.device_token import DeviceTokens
@@ -199,15 +197,5 @@ def create_app(
     return app
 
 
-def _create_app_or_exit() -> FastAPI:
-    """Con una configuración inválida, termina con solo los mensajes de error. El error
-    de pydantic incluye la entrada, y con ella los secretos (feature 004, R016)."""
-    try:
-        return create_app()
-    except ValidationError as error:
-        messages = "; ".join(str(item["msg"]) for item in error.errors(include_input=False))
-        sys.stderr.write(f"configuración inválida: {messages}\n")
-        raise SystemExit(1) from None
-
-
-app = _create_app_or_exit()
+# Con una configuración inválida, termina sin escribir sus valores (feature 004, plan D7).
+app = create_app(settings_or_exit())

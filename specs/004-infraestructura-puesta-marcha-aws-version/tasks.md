@@ -468,7 +468,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T027 — Protección de arranque compartida `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R016
 - **Depende de:** —
 - **Archivos:**
