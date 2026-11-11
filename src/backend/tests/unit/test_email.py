@@ -45,7 +45,7 @@ def test_espera_exponencial_con_tope() -> None:
 @pytest.mark.anyio
 async def test_ses_envia_con_la_api_v2() -> None:
     client = boto3.client(
-        "sesv2", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x"
+        "sesv2", region_name="us-east-2", aws_access_key_id="x", aws_secret_access_key="x"
     )
     message = EmailMessage(to="dueno@ejemplo.com", subject="Asunto ñ", text="Cuerpo")
     with Stubber(client) as stub:

@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 class SesEmailSender:
     def __init__(
-        self, *, sender: str, client: "SESV2Client | None" = None, region: str = "us-east-1"
+        self, *, sender: str, client: "SESV2Client | None" = None, region: str = "us-east-2"
     ) -> None:
         self._sender = sender
         self._client = client or boto3.client("sesv2", region_name=region)
