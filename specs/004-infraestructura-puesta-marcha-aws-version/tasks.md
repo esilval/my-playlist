@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-11-09  |
-| Estado | Approved · 9072a98771a3       |
+| Estado | Approved · 6fc283f00e73       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -115,6 +115,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 - **Archivos:**
   - `src/backend/app/catalog/infrastructure/youtube.py`
   - `src/backend/app/catalog/infrastructure/quota.py`
+  - `src/backend/app/main.py`
   - `src/backend/tests/unit/test_youtube_quota.py`
 - **Hecho cuando:** pasan:
   - `test_F004_R021_cada_search_suma_100_y_cada_videos_list_suma_1`;
@@ -148,6 +149,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `src/realtime/test/metrics.test.ts`
   - `src/realtime/src/server.ts`
   - `src/realtime/src/relay.ts`
+  - `src/realtime/src/rooms.ts`
   - `src/realtime/test/server.test.ts`
 - **Hecho cuando:** pasan:
   - `F004_R011 cada 60 s escribe Connections, EventsRelayed, RelayDelay y RedisErrors en EMF`;
@@ -175,7 +177,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `test_F004_R004_db_users_crea_api_y_worker_sin_bypassrls_createrole_ni_app_migrator`, contra el PostgreSQL del compose;
   - `test_F004_R004_db_users_es_idempotente_y_cambia_la_contrasena`;
   - `test_F004_R004_myplaylist_api_puede_set_role_app_api_y_no_app_migrator`;
-  - `test_F004_R004_las_migraciones_corren_en_una_base_nueva_con_un_usuario_createrole_sin_superusuario`, que imita al maestro de RDS. Crea una base aparte, ejecuta `alembic upgrade head` hasta la `0004` y comprueba que ningún rol `app_*` tiene `BYPASSRLS`;
+  - `test_F004_R004_las_migraciones_corren_en_una_base_nueva_con_un_usuario_createrole_sin_superusuario`, que imita al maestro de RDS. Crea una base aparte, ejecuta `alembic upgrade head` hasta la cabeza y comprueba que ningún rol `app_*` tiene `BYPASSRLS`;
   - `test_F004_R004_la_0001_corrige_un_rol_app_que_ya_tenia_bypassrls`;
   - `test_F004_R006_env_compone_las_url_sin_escribir_la_contrasena_en_el_registro`;
   - `test_F004_R004_el_mando_de_la_imagen_no_migra_al_arrancar`;
@@ -316,7 +318,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `run "F004_R016_todos_los_grupos_de_registros_guardan_30_dias"`;
   - `run "F004_R016_sin_registros_de_acceso_del_alb_ni_de_cloudfront"`;
   - `run "F004_R020_contributor_insights_cuenta_401_y_403_por_ip"`;
-  - `run "F004_R021_alarma_de_cuota_de_youtube_en_8000"`;
+  - `run "F004_R021_alarma_de_cuota_de_youtube_en_8000"`, con la estadística `Maximum`, un periodo de 1 minuto y `treat_missing_data = notBreaching`;
   - `run "F004_R011_el_panel_muestra_sg1_a_sg6_y_la_disponibilidad_del_mes"`;
   - `run "presupuesto_con_aviso_por_correo"` (D12, sin requisito propio).
 
@@ -354,7 +356,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - Tras etiquetar `v0.2.0-rc.1`, quedan con resultado en `docs/qa/infra-despliegue.md`, todos contra la preproducción:
     - `F004_R001`: despliegue aprobado, con la etiqueta, quién aprobó y la hora en GitHub;
     - `F004_R002`: el lanzamiento desde una rama se rechaza, y el de una etiqueta espera la aprobación;
-    - `F004_R004`: una sola migración en los registros y la revisión `0004`;
+    - `F004_R004`: una sola migración en los registros, la revisión de la cabeza y, como la preproducción es una base RDS nueva, que el maestro crea los roles `app_*` y ninguno tiene `BYPASSRLS`;
     - `F004_R006`: ningún valor de secreto en las imágenes, en los registros ni en el repositorio.
 
 ### T019 — Preproducción temporal y la prueba de carga de Q2
@@ -464,6 +466,21 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
   El README raíz marca la feature 004 como implementada y enlaza la guía. `src/backend/README.md` describe `ENV=preproduction`, `app.ops` y el registro por petición.
 
+### T027 — Protección de arranque compartida `P`
+
+- **Estado:** `[ ]`
+- **Requisitos:** R016
+- **Depende de:** —
+- **Archivos:**
+  - `src/backend/app/shared/config.py`
+  - `src/backend/app/main.py`
+  - `src/backend/app/worker.py`
+  - `src/backend/tests/unit/test_config.py`
+- **Hecho cuando:**
+  - `settings_or_exit()` vive en `app/shared/config.py`, y la usan la API y el trabajador, sin copias.
+  - Pasa `test_F004_R016_settings_or_exit_escribe_solo_los_mensajes_y_termina_con_1`, en el mismo proceso, con `capsys`.
+  - Siguen en verde `test_F004_R016_el_arranque_con_configuracion_invalida_no_escribe_valores` y `test_F004_R016_el_trabajador_con_configuracion_invalida_no_escribe_valores`.
+
 ### T026 — La política de tratamiento definitiva `P`
 
 - **Estado:** `[ ]`
@@ -500,7 +517,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 | R013 | T007, T016, T022 |
 | R014 | T014, T020 |
 | R015 | T020 |
-| R016 | T003, T006, T008, T016, T022 |
+| R016 | T003, T006, T008, T016, T022, T027 |
 | R017 | T019 |
 | R018 | T024 |
 | R019 | T024 |
