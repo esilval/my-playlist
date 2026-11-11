@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-11-09  |
-| Estado | Approved · a1ff298afa43       |
+| Estado | Approved · de8ad3ec47c4       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -213,7 +213,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
     - la lista de requisitos previos de D17;
     - la comprobación previa de las políticas de la organización (D18), con su resultado;
     - la petición del proveedor OIDC a quien administra la organización, con su fecha y su respuesta;
-    - el coste comprobado con AWS Pricing Calculator. Si el total se aparta más de un 20 % del plan, se avisa al usuario.
+    - el coste comprobado con la API de precios de AWS (`aws pricing get-products`) en us-east-2. Si el total se aparta más de un 20 % del plan, se avisa al usuario.
   - **El usuario,** con credenciales de administrador, aplica el arranque y delega los servidores de nombres de `200oklabs.com` a Route 53, y `dig NS 200oklabs.com` lo muestra. El proveedor OIDC puede llegar después: lo exige T018, no T009.
 
 ### T010 — Red `P`
@@ -232,7 +232,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 ### T011 — Datos: RDS y ElastiCache `P`
 
 - **Estado:** `[x]`
-- **Requisitos:** R009, R010
+- **Requisitos:** R009, R010, R022
 - **Depende de:** T009
 - **Archivos:**
   - `src/infra/modules/data/*.tf`
@@ -241,12 +241,13 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `run "F004_R009_rds_es_multi_az_y_redis_tiene_replica_con_conmutacion"`;
   - `run "F004_R010_rds_guarda_copias_7_dias"`;
   - `run "F004_R010_produccion_protege_contra_borrado_y_guarda_instantanea_final"`;
+  - `run "F004_R022_la_preproduccion_se_destruye_sin_dejar_nada"`: sin protección contra borrado ni instantánea final (D13);
   - `run "F004_R009_redis_cifra_en_transito_y_exige_token"`.
 
 ### T012 — Secretos `P`
 
 - **Estado:** `[x]`
-- **Requisitos:** R006
+- **Requisitos:** R006, R022
 - **Depende de:** T009
 - **Archivos:**
   - `src/infra/modules/secrets/*.tf`
@@ -254,14 +255,15 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 - **Hecho cuando:** pasan:
   - `run "F004_R006_los_secretos_generados_tienen_48_caracteres"`;
   - `run "F004_R006_youtube_api_key_no_tiene_valor_en_terraform"`;
-  - `run "F004_R006_los_secretos_se_escriben_con_solo_escritura"`: cada `aws_secretsmanager_secret_version` usa `secret_string_wo` y ninguna `secret_string`, y los generados son efímeros (D6).
+  - `run "F004_R006_los_secretos_se_escriben_con_solo_escritura"`: cada `aws_secretsmanager_secret_version` usa `secret_string_wo` y ninguna `secret_string`, y los generados son efímeros (D6);
+  - `run "F004_R022_la_preproduccion_borra_sus_secretos_al_momento"`: sin ventana de recuperación, para que destruirla no deje nada (D13).
 
-  `src/infra/README.md` lista los valores que, por no tener un atributo de solo escritura, quedan en el estado (por ejemplo, el `auth_token` de ElastiCache) y cómo se rotan.
+  `src/infra/README.md` lista los valores que, por no tener un atributo de solo escritura, quedan en el estado (la cabecera de CloudFront, D6) y cómo se rota cada secreto.
 
 ### T013 — Cómputo: ECS, ECR, ALB y la tarea de migración
 
 - **Estado:** `[ ]`
-- **Requisitos:** R001, R004, R005, R006, R009
+- **Requisitos:** R001, R003, R004, R005, R006, R009
 - **Depende de:** T010, T011, T012
 - **Archivos:**
   - `src/infra/modules/compute/*.tf`
@@ -272,6 +274,8 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `run "F004_R004_la_api_no_migra_y_existe_la_tarea_de_migracion"`;
   - `run "F004_R006_los_secretos_llegan_como_secrets_y_no_como_environment"`;
   - `run "F004_R009_el_alb_solo_admite_cloudfront_y_su_cabecera"`;
+  - `run "F004_R003_el_alb_solo_escucha_https_con_el_certificado_del_origen"`: un listener en 443, con TLS 1.2 como mínimo y el certificado de ACM en us-east-2 de `origin.<dominio>`, validado por DNS, y el registro alias del origen al ALB (D1);
+  - `run "F004_R008_las_tareas_fijan_aws_region_us_east_2"` (D6, D14);
   - `run "F004_R001_ecr_tiene_etiquetas_inmutables"`: una versión desplegada siempre es la imagen construida desde su etiqueta.
 
 ### T014 — Borde: CloudFront, certificado, la SPA y el mantenimiento
@@ -294,6 +298,8 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - Pasan:
     - `run "F004_R003_todas_las_rutas_redirigen_http_a_https_con_tls_1_2"`;
     - `run "F004_R003_api_y_socket_io_van_al_alb_sin_cache"`;
+    - `run "F004_R003_cloudfront_habla_con_el_alb_por_https"`: el origen es `origin.<dominio>`, con `https-only` y TLS 1.2 (D1);
+    - `run "F004_R009_cloudfront_pone_la_cabecera_que_exige_el_alb"`: el valor sale del secreto `cloudfront-origin-header`, leído por el módulo, y es el mismo en el origen de CloudFront y en la regla del ALB (D6);
     - `run "F004_R014_la_funcion_edge_esta_en_viewer_request_en_los_tres_comportamientos"`;
     - `run "F004_R003_la_distribucion_no_tiene_respuestas_de_error_personalizadas"`, para que los 404 y 403 de la API lleguen tal cual (R013 de 001);
     - `run "F004_R020_api_reenvia_cloudfront_viewer_address_al_origen"`.
@@ -347,7 +353,10 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `run "F004_R022_los_dos_entornos_usan_el_mismo_modulo_y_la_misma_capacidad"`;
   - `run "F004_R022_preproduccion_usa_el_catalogo_falso_mailpit_y_su_dominio"`;
   - `run "F004_R022_preproduccion_tiene_la_tarea_de_k6_y_produccion_no"`;
-  - `run "F004_R022_todos_los_recursos_llevan_la_etiqueta_environment"`.
+  - `run "F004_R022_todos_los_recursos_llevan_la_etiqueta_environment"`;
+  - `run "F004_R006_redis_recibe_el_token_de_su_secreto_por_solo_escritura"`: el módulo raíz lee el secreto `redis-auth-token` con un recurso efímero y lo pasa a `auth_token_wo` del módulo de datos (D6).
+
+  La rotación del token de Redis (subir a la vez `rotation["redis-auth-token"]` y `redis_auth_token_version`) queda en `src/infra/README.md`.
 
 ### T018 — Flujos de despliegue e infraestructura, y primer despliegue en preproducción
 
@@ -507,19 +516,31 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
   Hasta que llegue el texto, la tarea queda abierta y bloquea T023.
 
+### T028 — La región de SES por defecto es us-east-2 `P`
+
+- **Estado:** `[ ]`
+- **Requisitos:** R008
+- **Depende de:** —
+- **Archivos:**
+  - `src/backend/app/shared/config.py`
+  - `src/backend/tests/unit/test_config.py`
+- **Hecho cuando:**
+  - `aws_region` vale `us-east-2` por defecto, como fija ADR-0019 (D14).
+  - Pasa `test_F004_R008_la_region_de_ses_por_defecto_es_us_east_2`, que comprueba el valor por defecto y que `AWS_REGION` lo sigue cambiando.
+
 ## Cobertura
 
 | Requisito | Tareas |
 | --------- | ------ |
 | R001 | T013, T018, T023, T025 |
 | R002 | T009, T018 |
-| R003 | T014, T023 |
+| R003 | T013, T014, T023 |
 | R004 | T008, T013, T018 |
 | R005 | T013, T021 |
-| R006 | T008, T012, T013, T018, T023 |
+| R006 | T008, T012, T013, T017, T018, T023 |
 | R007 | T001, T021, T026 |
-| R008 | T015, T023 |
-| R009 | T010, T011, T013, T021 |
+| R008 | T013, T015, T023, T028 |
+| R009 | T010, T011, T013, T014, T021 |
 | R010 | T011, T021 |
 | R011 | T002, T003, T004, T007, T016, T022 |
 | R012 | T016, T022 |
@@ -532,6 +553,6 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 | R019 | T024 |
 | R020 | T003, T014, T016, T022 |
 | R021 | T005, T016, T022 |
-| R022 | T001, T017, T019 |
+| R022 | T001, T011, T012, T017, T019 |
 
 > Todo requisito MUST debe tener al menos una tarea.
