@@ -34,7 +34,8 @@ CONTRACT_FIELDS: dict[str, set[str]] = {
     "track.failed": {"item_id", "title"},
     "queue.changed": set(),
 }
-BASE_FIELDS = {"type", "session_id", "version"}
+# `published_at` lo añade la feature 004 (plan D11) para medir el retraso del tiempo real.
+BASE_FIELDS = {"type", "session_id", "version", "published_at"}
 
 
 @pytest.fixture
@@ -102,6 +103,7 @@ async def test_F002_R014_publica_en_el_canal_del_establecimiento(redis: Redis, p
         count=1,
     )
 
+    assert isinstance(message.pop("published_at"), int)
     assert message == {"type": "session.opened", "session_id": str(session_id), "version": 7}
 
 

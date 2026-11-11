@@ -3,13 +3,19 @@
 Los casos de uso encolan el mensaje en la misma transacción que el resto de sus
 cambios; el trabajador lo envía después. Un fallo del proveedor nunca rompe la
 petición del usuario, y un mensaje no se pierde si el proceso se reinicia.
+
+Cada envío deja una línea JSON con su plantilla, su identificador y su resultado, nunca la
+dirección ni el contenido: son datos personales y llevan enlaces de un solo uso (feature
+004, R016, plan D11). Por eso un fallo tampoco escribe la traza ni el mensaje de la
+excepción, que puede repetir el destinatario.
 """
 
 import json
 import logging
-from collections.abc import Mapping
+import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -59,6 +65,11 @@ async def enqueue(
     )
 
 
+def _write_line(line: str) -> None:
+    sys.stdout.write(line + "\n")
+    sys.stdout.flush()
+
+
 def retry_delay(attempts: int) -> timedelta:
     """Espera exponencial tras el intento número `attempts` (1, 2, …), con tope."""
     delay: timedelta = RETRY_BASE * (2 ** (attempts - 1))
@@ -77,9 +88,27 @@ class _Claimed:
 class OutboxDispatcher:
     """Envía los mensajes pendientes con el rol app_worker (plan D4)."""
 
-    def __init__(self, db: Database, sender: EmailSender) -> None:
+    def __init__(
+        self, db: Database, sender: EmailSender, write: Callable[[str], None] = _write_line
+    ) -> None:
         self._db = db
         self._sender = sender
+        self._write = write
+
+    def _log(self, message: _Claimed, result: str, error: BaseException | None = None) -> None:
+        line: dict[str, Any] = {
+            "ts": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "level": "info" if result == "sent" else "warning",
+            "event": "email",
+            "result": result,
+            "message_id": str(message.id),
+            "template": str(message.template),
+            "attempt": message.attempts,
+        }
+        if error is not None:
+            # Solo el tipo: el mensaje de la excepción puede repetir el destinatario.
+            line["error"] = type(error).__name__
+        self._write(json.dumps(line, ensure_ascii=False))
 
     async def dispatch(self, batch: int = 20) -> int:
         """Reclama y envía un lote; devuelve cuántos mensajes se enviaron."""
@@ -107,20 +136,20 @@ class OutboxDispatcher:
     async def _send(self, message: _Claimed) -> bool:
         try:
             rendered = render(message.template, message.to_address, message.payload)
-        except KeyError:
-            # Al payload le falta un dato: reintentar no lo arregla.
-            logger.exception("correo %s con datos incompletos para su plantilla", message.id)
+        except Exception as error:
+            # Al payload le falta un dato (KeyError) u otro fallo de la plantilla:
+            # reintentar no lo arregla.
+            self._log(message, "incomplete", error)
             await self._mark(message.id, "failed")
             return False
         try:
             await self._sender.send(rendered)
-        except Exception:
+        except Exception as error:
             # No se registra el destinatario: es un dato personal (Q7).
-            logger.exception(
-                "fallo al enviar el correo %s (intento %s)", message.id, message.attempts
-            )
+            self._log(message, "failed" if message.attempts >= MAX_ATTEMPTS else "retry", error)
             await self._mark_failure(message)
             return False
+        self._log(message, "sent")
         return await self._mark(message.id, "sent")
 
     async def _mark_failure(self, message: _Claimed) -> None:

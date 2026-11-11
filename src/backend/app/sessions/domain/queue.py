@@ -51,6 +51,12 @@ class QueueItem:
     # El dispositivo anónimo que la pidió (feature 003, D4); None si no la pidió un
     # cliente (la herramienta de desarrollo y, más adelante, el propietario).
     requested_by: UUID | None = None
+    # Cuándo entró en la cola: la pone la base de datos al guardarla, así que es None
+    # hasta que se vuelve a cargar. Sirve para saber si esperaba cuando terminó la
+    # anterior (TrackGap, feature 004, plan D11). Sale del reloj de PostgreSQL y
+    # finished_at del de la aplicación: un desfase entre los dos solo afecta a una canción
+    # que entra justo cuando termina la anterior.
+    created_at: datetime | None = None
 
     @property
     def track(self) -> Track:

@@ -80,6 +80,8 @@ def test_F002_R013_produccion_no_arranca_sin_secreto_propio() -> None:
             env="production",
             email_backend="ses",
             data_policy_version="2026-10",
+            email_from="MyPlaylist <no-responder@myplaylist.200oklabs.com>",
+            public_base_url="https://myplaylist.200oklabs.com",
             realtime_ticket_secret=secret,
             catalog_provider="youtube",
             youtube_api_key="clave-de-produccion-de-pruebas",

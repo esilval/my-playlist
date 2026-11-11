@@ -186,8 +186,19 @@ def upgrade() -> None:
             END $$
             """
         )
-        # Si el rol ya existía, se corrige: ninguno puede saltarse RLS (ADR-0009).
-        op.execute(f"ALTER ROLE {role} NOBYPASSRLS")
+        # Si el rol ya existía, se corrige: ninguno puede saltarse RLS (ADR-0009). Solo se
+        # toca si lo tiene: en RDS, el usuario maestro tiene CREATEROLE pero no es
+        # superusuario, y PostgreSQL 16 no le deja cambiar el atributo BYPASSRLS. Un rol
+        # recién creado ya nace sin él (feature 004, plan D5).
+        op.execute(
+            f"""
+            DO $$ BEGIN
+                IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}' AND rolbypassrls) THEN
+                    ALTER ROLE {role} NOBYPASSRLS;
+                END IF;
+            END $$
+            """
+        )
     op.execute("GRANT app_migrator TO current_user")
     op.execute("GRANT USAGE ON SCHEMA public TO app_api, app_worker")
     op.execute("GRANT CREATE ON SCHEMA public TO app_migrator")

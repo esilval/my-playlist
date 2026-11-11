@@ -7,6 +7,8 @@
 import { createClient } from "redis";
 import type { Server } from "socket.io";
 
+import type { RealtimeMetrics } from "./metrics.js";
+
 const CHANNEL = /^est:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const CHANNEL_PATTERN = "est:*";
 
@@ -46,9 +48,10 @@ export interface Relay {
   close(): Promise<void>;
 }
 
-export async function startRelay(io: Server, redisUrl: string): Promise<Relay> {
+export async function startRelay(io: Server, redisUrl: string, metrics?: RealtimeMetrics): Promise<Relay> {
   const subscriber = createClient({ url: redisUrl });
   subscriber.on("error", (error: unknown) => {
+    metrics?.onRedisError();
     // node-redis reconecta solo; mientras tanto, los clientes se resincronizan con la API.
     console.error("error de Redis en el reenvío", error);
   });
@@ -61,6 +64,8 @@ export async function startRelay(io: Server, redisUrl: string): Promise<Relay> {
     }
     // La sala se llama igual que el canal: est:{id} solo llega a est:{id} (S8).
     io.to(channel).emit(event.type, event);
+    // El retraso desde que el monolito lo publicó (feature 004, plan D11).
+    metrics?.onRelay(event.published_at);
   });
   return {
     async close() {

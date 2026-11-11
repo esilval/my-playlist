@@ -1,11 +1,13 @@
 """Punto de entrada de la API del monolito."""
 
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from app.accounts.api import auth, owner, public
 from app.accounts.application.confirm_password_reset import ConfirmPasswordReset
@@ -31,6 +33,7 @@ from app.accounts.interface import (
 from app.catalog.domain.catalog import MusicCatalog
 from app.catalog.infrastructure.cache import RedisCatalogCache
 from app.catalog.infrastructure.fake import FakeCatalog
+from app.catalog.infrastructure.quota import YouTubeQuotaCounter
 from app.catalog.infrastructure.youtube import YouTubeCatalog
 from app.catalog.interface import SearchTracks, TrackLookup
 from app.sessions.api import client, music_session, player, realtime
@@ -50,6 +53,8 @@ from app.shared.config import Settings, get_settings
 from app.shared.csrf import CsrfMiddleware, HstsMiddleware
 from app.shared.db import Database
 from app.shared.device_token import DeviceTokens
+from app.shared.infrastructure.emf import EmfMetrics, namespace_for
+from app.shared.observability import RequestLogMiddleware
 from app.shared.realtime_ticket import RealtimeTicketIssuer
 
 health_router = APIRouter()
@@ -84,12 +89,17 @@ def create_app(
     policy_store.get(settings.data_policy_version)
 
     db = Database.from_url(settings.database_url, role="app_api")
+    metrics = EmfMetrics(namespace_for(settings.env))
     # Eventos de la sesión de música hacia el tiempo real (plan D6 de la feature 002).
     publisher = RedisEventPublisher.from_url(settings.redis_url)
     # Catálogo de música (feature 003, plan D1, D2, D8).
-    youtube = (
-        YouTubeCatalog(settings.youtube_api_key) if settings.catalog_provider == "youtube" else None
+    # La cuota de YouTube que se lleva gastada en el día (feature 004, R021).
+    quota = (
+        YouTubeQuotaCounter.from_url(settings.redis_url, metrics)
+        if settings.catalog_provider == "youtube"
+        else None
     )
+    youtube = YouTubeCatalog(settings.youtube_api_key, quota=quota) if quota is not None else None
     catalog: MusicCatalog = youtube or FakeCatalog()
     catalog_cache = RedisCatalogCache.from_url(settings.redis_url)
 
@@ -100,12 +110,18 @@ def create_app(
         await catalog_cache.aclose()
         if youtube is not None:
             await youtube.aclose()
+        if quota is not None:
+            await quota.aclose()
         await db.dispose()
 
     app = FastAPI(title="MyPlaylist API", lifespan=lifespan)
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_middleware(CsrfMiddleware, allowed_origin=settings.public_base_url)
     app.add_middleware(HstsMiddleware)
+    # El último que se añade envuelve a los demás: registra también los 403 de CSRF
+    # (feature 004, plan D11).
+    app.add_middleware(RequestLogMiddleware, namespace=namespace_for(settings.env))
+    app.state.metrics = metrics
     app.state.settings = settings
     app.state.db = db
     app.state.event_publisher = publisher
@@ -159,7 +175,7 @@ def create_app(
         secret=settings.realtime_ticket_secret, clock=clock
     )
     app.state.report_player_event = ReportPlayerEvent(
-        unit_of_work=sessions, publisher=publisher, clock=clock
+        unit_of_work=sessions, publisher=publisher, clock=clock, metrics=metrics
     )
     # El cliente que pide canciones desde el QR (feature 003).
     track_lookup = TrackLookup(catalog=catalog)
@@ -183,4 +199,15 @@ def create_app(
     return app
 
 
-app = create_app()
+def _create_app_or_exit() -> FastAPI:
+    """Con una configuración inválida, termina con solo los mensajes de error. El error
+    de pydantic incluye la entrada, y con ella los secretos (feature 004, R016)."""
+    try:
+        return create_app()
+    except ValidationError as error:
+        messages = "; ".join(str(item["msg"]) for item in error.errors(include_input=False))
+        sys.stderr.write(f"configuración inválida: {messages}\n")
+        raise SystemExit(1) from None
+
+
+app = _create_app_or_exit()

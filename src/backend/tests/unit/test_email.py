@@ -79,6 +79,9 @@ def test_produccion_exige_ses() -> None:
         env="production",
         email_backend="ses",
         data_policy_version="2026-10",
+        # Y el remitente y la URL pública del servicio (feature 004, plan D7).
+        email_from="MyPlaylist <no-responder@myplaylist.200oklabs.com>",
+        public_base_url="https://myplaylist.200oklabs.com",
         # Producción también exige el secreto propio del tiempo real (feature 002, ADR-0014).
         realtime_ticket_secret="secreto-de-produccion-de-al-menos-32-caracteres",
         # Producción también exige el catálogo de YouTube y su clave, y el secreto propio

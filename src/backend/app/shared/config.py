@@ -1,7 +1,9 @@
 """Configuración del monolito, leída de variables de entorno."""
 
+from email.utils import parseaddr
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,12 +16,17 @@ MIN_REALTIME_TICKET_SECRET_LENGTH = 32
 # Solo lo usa el monolito; producción no arranca con él.
 LOCAL_DEVICE_TOKEN_SECRET = "solo-para-desarrollo-local-dispositivo-no-usar-en-produccion"
 MIN_DEVICE_TOKEN_SECRET_LENGTH = 32
+# Entornos desplegados (feature 004, plan D7): exigen secretos propios. La preproducción
+# admite además el catálogo falso, SMTP hacia Mailpit y la política en borrador.
+DEPLOYED_ENVS = frozenset({"preproduction", "production"})
+# Anfitriones que nunca sirven de URL pública en producción (feature 004, plan D7).
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    env: Literal["local", "test", "production"] = "local"
+    env: Literal["local", "test", "preproduction", "production"] = "local"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/myplaylist"
     # Transporte de los eventos hacia el servicio de tiempo real (ADR-0005, plan D6 de 002).
     redis_url: str = "redis://localhost:6379/0"
@@ -31,7 +38,8 @@ class Settings(BaseSettings):
     argon2_parallelism: int = 1
     # Correo (ADR-0011): SES en AWS; SMTP contra Mailpit en local; memoria en pruebas.
     email_backend: Literal["ses", "smtp", "memory"] = "smtp"
-    # El dominio real del remitente (con SPF, DKIM y DMARC) aún no está decidido.
+    # El de desarrollo; producción usa no-responder@myplaylist.200oklabs.com, con DKIM,
+    # MAIL FROM y DMARC (feature 004, plan D14).
     email_from: str = "MyPlaylist <no-responder@example.com>"
     smtp_host: str = "localhost"
     smtp_port: int = 1025
@@ -59,26 +67,41 @@ class Settings(BaseSettings):
                 "en producción hace falta la política de tratamiento definitiva (R022): "
                 "la versión vigente es el borrador"
             )
-        if self.env == "production" and (
+        if self.env in DEPLOYED_ENVS and (
             self.realtime_ticket_secret == LOCAL_REALTIME_TICKET_SECRET
             or len(self.realtime_ticket_secret) < MIN_REALTIME_TICKET_SECRET_LENGTH
         ):
             raise ValueError(
-                "en producción hace falta REALTIME_TICKET_SECRET propio, de al menos "
+                f"en {self.env} hace falta REALTIME_TICKET_SECRET propio, de al menos "
                 f"{MIN_REALTIME_TICKET_SECRET_LENGTH} caracteres (ADR-0014)"
             )
         if self.env == "production" and self.catalog_provider != "youtube":
             raise ValueError("en producción el catálogo es YouTube: CATALOG_PROVIDER=youtube")
         if self.catalog_provider == "youtube" and not self.youtube_api_key.strip():
             raise ValueError("el catálogo de YouTube necesita YOUTUBE_API_KEY (ADR-0010)")
-        if self.env == "production" and (
+        if self.env in DEPLOYED_ENVS and (
             self.device_token_secret == LOCAL_DEVICE_TOKEN_SECRET
             or len(self.device_token_secret) < MIN_DEVICE_TOKEN_SECRET_LENGTH
         ):
             raise ValueError(
-                "en producción hace falta DEVICE_TOKEN_SECRET propio, de al menos "
+                f"en {self.env} hace falta DEVICE_TOKEN_SECRET propio, de al menos "
                 f"{MIN_DEVICE_TOKEN_SECRET_LENGTH} caracteres"
             )
+        if self.env == "production":
+            # Feature 004, plan D7: el remitente y la URL pública de desarrollo no sirven.
+            _, sender = parseaddr(self.email_from)
+            _, at, domain = sender.lower().rpartition("@")
+            if not at or domain in ("", "example.com") or domain.endswith(".example.com"):
+                raise ValueError(
+                    "en producción hace falta EMAIL_FROM con un remitente del dominio del "
+                    "servicio, no de example.com (ADR-0011)"
+                )
+            url = urlsplit(self.public_base_url)
+            if url.scheme != "https" or not url.hostname or url.hostname in LOCAL_HOSTS:
+                raise ValueError(
+                    "en producción hace falta PUBLIC_BASE_URL con https:// y el dominio "
+                    "público, no localhost"
+                )
         return self
 
 

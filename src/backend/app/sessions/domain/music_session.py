@@ -108,6 +108,8 @@ class MusicSession:
     player_epoch: int = 0
     player_seen_at: datetime | None = None
     version: int = 0
+    # La última toma de control del reproductor (TrackGap, feature 004, plan D11).
+    player_claimed_at: datetime | None = None
     items: list[QueueItem] = field(default_factory=list)
     events: list[SessionEvent] = field(default_factory=list, compare=False)
 
@@ -205,6 +207,7 @@ class MusicSession:
         self._require_open()
         self.player_epoch += 1
         self.player_seen_at = now
+        self.player_claimed_at = now
         current = self.current
         if current is not None:
             # Vuelve a empezar: su inicio real será el que informe el nuevo reproductor.
@@ -245,6 +248,37 @@ class MusicSession:
                 self._play_next()
                 self._changed(SessionEventType.TRACK_FAILED, item_id=str(item.id), title=item.title)
         return Progress(current=_track(self.current), next=self._next(), version=self.version)
+
+    def track_gap(self, item_id: UUID) -> timedelta | None:
+        """El silencio entre que terminó la canción anterior y empezó esta (Q5, feature
+        004, plan D11), o None si no se mide.
+
+        Solo se mide si la anterior terminó sola, esta ya esperaba en la cola cuando
+        terminó y el reproductor es el mismo desde entonces. Con la cola vacía, tras un
+        salto, o tras una toma de control o una recarga, que reinician la canción (R010),
+        la cifra no mediría un cambio de canción sino el tiempo desde que terminó la
+        anterior."""
+        item = self._item(item_id)
+        if item.started_at is None:
+            return None
+        finished = [
+            (other.finished_at, other)
+            for other in self.items
+            if other.id != item.id
+            and other.finished_at is not None
+            and other.finished_at <= item.started_at
+            and other.state in (QueueItemState.PLAYED, QueueItemState.SKIPPED)
+        ]
+        if not finished:
+            return None
+        finished_at, previous = max(finished, key=lambda pair: pair[0])
+        if previous.state is not QueueItemState.PLAYED:
+            return None
+        if item.created_at is None or item.created_at > finished_at:
+            return None
+        if self.player_claimed_at is not None and self.player_claimed_at > finished_at:
+            return None
+        return item.started_at - finished_at
 
     def advance(self, epoch: int) -> Progress:
         """Avanza en espera (R008, plan D4): si no suena ninguna canción, empieza la
