@@ -56,9 +56,9 @@
 - Un requisito no funcional de rendimiento se verifica con una prueba de carga en `src/perf/`, cuyo resultado queda anotado en el propio script.
 - Una prueba manual (impresión, dispositivos reales) se documenta en `docs/qa/`, con dispositivos y resultado. Una tarea que depende de ella no se cierra sin ese resultado.
 - **Cobertura:** el CI mide la cobertura de líneas y falla si baja del suelo:
-  - backend: 91 %, con unitarias e integración juntas (`uv run pytest --cov`, suelo en `pyproject.toml`);
+  - backend: 93 %, con unitarias e integración juntas (`uv run pytest --cov`, suelo en `pyproject.toml`);
   - web: 89 % (`npm run test:coverage`, suelo en `vite.config.ts`);
-  - tiempo real: 85 % (`npm run test:coverage`, suelo en `vitest.config.ts`).
+  - tiempo real: 91 % (`npm run test:coverage`, suelo en `vitest.config.ts`).
 
   El suelo es el valor del primer registro en el CI (2026-10-26), redondeado hacia abajo, y solo puede subir: cuando la cobertura suba, se sube el suelo en el mismo PR. Cuenta la medida del CI, no la local, porque las pruebas que dependen de tiempos recorren ramas un poco distintas en cada ejecución: la web dio 90,02 % en local y 89,91 % en el CI.
 
@@ -120,7 +120,7 @@ que alguien se acuerde, y eso hay que saberlo.
 | Sin instalación (principio 5) | juicio | criterio humano al aprobar la spec | — |
 | Decisiones transversales como ADR (principio 7) | juicio | criterio humano en `/sdd:plan` y `/architecture:review` | — |
 | Merge a `main` por PR con CI en verde | mecánica | protección de rama en GitHub: PR obligatorio y el check `ci` en verde, también para administradores | — |
-| Cobertura de pruebas | mecánica | CI (`backend-integration`, `web`, `realtime`), que falla por debajo del suelo | líneas: backend 91 %, web 89 %, tiempo real 85 % |
+| Cobertura de pruebas | mecánica | CI (`backend-integration`, `web`, `realtime`), que falla por debajo del suelo | líneas: backend 93 %, web 89 %, tiempo real 91 % |
 
 Niveles: **mecánica** (un script la comprueba), **revisable** (requiere leer el
 diff y juzgar), **juicio** (la decide una persona caso por caso).
@@ -148,3 +148,4 @@ Ninguna.
   - **Alternativas descartadas:**
     - Saltar las features en curso: no detectaría una tarea cerrada sin prueba hasta el final.
     - Fusionar la spec junto con el código: deja las decisiones sin revisar en `main` hasta que la feature termina.
+- **2026-11-11 — Suelos de cobertura más altos (PR #21, feature 004).** Con las pruebas de T001 a T008, el CI midió un 93,76 % en el backend y un 91,17 % en el tiempo real. Los suelos suben a 93 % y 91 %, redondeando hacia abajo, como manda la regla de cobertura. La web no cambia (89 %).

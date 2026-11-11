@@ -43,7 +43,7 @@ addopts = "-ra"
 source = ["app"]
 
 [tool.coverage.report]
-fail_under = 91
+fail_under = 93
 
 [tool.ruff]
 line-length = 100
