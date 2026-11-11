@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-11-09         |
-| Estado | Approved · 9a306a42ec05              |
+| Estado | Approved · 2022afc0dea4              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -215,13 +215,14 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 - **Alternativas descartadas:** comprobar la configuración solo en el flujo de despliegue. Se podría saltar con un despliegue manual, y la aplicación es la que sabe qué necesita.
 - **Consecuencias:**
   - Las pruebas de `config.py` cubren los casos nuevos.
-  - El error de validación de pydantic incluye la entrada, y con ella los secretos. Por eso la API y el trabajador, al arrancar con una configuración inválida, escriben solo los mensajes de error y terminan con código 1.
+  - El error de validación de pydantic incluye la entrada, y con ella los secretos. Por eso la API y el trabajador, al arrancar con una configuración inválida, escriben solo los mensajes de error y terminan con código 1. Lo hacen con una sola función, `settings_or_exit()` en `app/shared/config.py`, para que las dos salidas no se separen (T027).
 
 ### D8 — Migraciones como una tarea aparte, antes de actualizar los servicios
 
 - **Decisión:**
   - **Orden:** el flujo de despliegue lanza una tarea de ECS de un solo uso, con la imagen nueva y el usuario maestro de RDS. La tarea ejecuta `alembic upgrade head` y después `python -m app.ops.db_users` (D5).
   - **Comprobación:** el flujo espera a que la tarea termine y comprueba su código de salida. Solo con 0 actualiza los servicios (R004).
+  - **La primera migración en una base RDS nueva:** el maestro crea los roles `app_*`, la rama de la `0001` que las pruebas del compose no recorren porque los roles ya existen allí. Se comprobó a mano en un PostgreSQL 16 vacío, y se vuelve a comprobar en el primer despliegue en la preproducción, que es una base nueva (T018, `F004_R004`).
   - **Si falla:** el flujo se detiene, los servicios siguen con su revisión anterior y Alembic deja la base en su revisión anterior, porque cada migración corre en una transacción (R005).
   - **Ejecución única:** solo la lanza el flujo, así que no hay dos procesos que migren a la vez (R004).
 - **Alternativas descartadas:**
@@ -289,7 +290,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
   - **Métricas EMF** en el espacio de nombres `MyPlaylist/<entorno>`, en la misma línea de registro. Solo llevan las dimensiones `Route` o `Service`; nunca el establecimiento ni el dispositivo (ADR-0018). Las de la API:
     - `RequestLatency` (ms, por `Route`);
     - `SearchUnavailable`, cada `503 search_unavailable`;
-    - `YouTubeQuotaUsed`: el total del día de la cuota, que se reinicia a medianoche de la hora del Pacífico. Es un contador de Redis `catalog:youtube-units:{día}`, al que el adaptador de YouTube suma lo que cuesta cada llamada: 100 por `search.list` y 1 por `videos.list`;
+    - `YouTubeQuotaUsed`: el total del día de la cuota, que se reinicia a medianoche de la hora del Pacífico. Es un contador de Redis `catalog:youtube-units:{día}`, al que el adaptador de YouTube suma lo que cuesta cada llamada: 100 por `search.list` y 1 por `videos.list`. Suma toda llamada con respuesta, también una de error, con su coste completo: Google cobra al menos 1 unidad por una petición inválida, así que puede sobrecontar, del lado seguro para la alarma. Una llamada sin respuesta no suma. Se emite con `count` y el valor es el total del día, no un incremento;
     - `TrackStarted`, `TrackFailed` y `TrackGap`. `TrackStarted` cuenta cada inicio que el servidor acepta, también el de una canción que vuelve a empezar tras una toma de control; `TrackFailed` cuenta cada fallo.
     - `TrackGap` son los ms entre el `finished_at` de la canción anterior de la sesión y el `started_at` de la nueva. Solo se mide si se cumplen las tres condiciones:
       - la anterior terminó sola (`played`, no saltada);
@@ -338,8 +339,9 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
     | SG5 | `TrackFailed` / `TrackStarted` | > 2 % en una hora |
     | SG5 | `TrackGap` p99 | > 3000 ms en una hora |
     | SG6 (R020) | Contributor Insights: 401 y 403 por IP en los registros de la API | > 50 en 1 minuto |
-    | R021 | `YouTubeQuotaUsed` | ≥ 8000 unidades |
+    | R021 | `YouTubeQuotaUsed`, estadística `Maximum`, periodo de 1 minuto; un minuto sin datos no la dispara (`treat_missing_data = notBreaching`) | ≥ 8000 unidades |
 
+  - **Estadísticas:** `YouTubeQuotaUsed` es un total, no una cuenta: con `Sum`, varias llamadas en un minuto sumarían totales y la alarma saltaría antes de tiempo. `Connections` es lo que tiene abierto cada tarea de C6: el panel lo suma entre las tareas (`Sum` por minuto). `RelayDelay` y `RequestLatency` usan percentiles (`p95`, `p99`).
   - **Historial:** CloudWatch guarda los datos de 1 minuto 15 días, los de 5 minutos 63 días y los de 1 hora 15 meses. Con eso, R011 se cumple con resolución de 5 minutos hasta los 63 días.
   - **Presupuesto de AWS:** AWS Budgets envía un correo al responsable cuando el gasto previsto del mes supera en un 20 % el coste estimado de este plan. Así se ve a tiempo una preproducción que no se destruyó.
   - **El umbral acumulado de SG3** (más de 1,8 h de caída en el mes) no se puede expresar como una alarma de CloudWatch, que evalúa como mucho un día. Se revisa en el panel cada semana, y así queda en el README de operación.
@@ -457,7 +459,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | `.github/workflows/preproduction.yml` | Levantar, desplegar, probar la carga y destruir la preproducción (D13) | R017, R022 |
 | `.github/workflows/maintenance.yml` | Retirar y volver (D10) | R014, R015 |
 | `.github/workflows/infra.yml`, `.github/workflows/ci.yml` | Plan y `apply` de la infraestructura; el trabajo `infra` (D9, D16) | R001 |
-| `src/backend/app/shared/config.py` | `ENV=preproduction` y validaciones nuevas (D7) | R007, R022 |
+| `src/backend/app/shared/config.py` | `ENV=preproduction`, validaciones nuevas y `settings_or_exit()`, que comparten la API y el trabajador (D7) | R007, R016, R022 |
 | `src/backend/app/shared/observability.py` | Middleware de registro por petición y formato EMF (D11) | R011, R016, R020 |
 | `src/backend/app/shared/metrics.py`, `src/backend/app/shared/infrastructure/emf.py` | Puerto `Metrics` y su implementación en memoria; la implementación EMF, en infraestructura (D11) | R011 |
 | `src/backend/app/sessions/application/` (eventos del reproductor), `src/backend/app/sessions/domain/{music_session,queue}.py`, `src/backend/app/sessions/infrastructure/repositories.py`, `src/backend/migrations/versions/0005_player_claimed_at.py` | `TrackStarted`, `TrackFailed` y `TrackGap` por el puerto; `created_at` de cada canción y `player_claimed_at` de la sesión (D11) | R011 |
@@ -503,7 +505,9 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 - **C6:** `GET /socket.io/health` responde `200 {"status": "ok"}`, igual que `/health`. Cada 60 s escribe la línea EMF de `Connections`, `EventsRelayed`, `RelayDelay` y `RedisErrors`.
 - **Configuración:**
   - `ENV` admite `local | test | preproduction | production`;
-  - variables nuevas: `DATABASE_HOST`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `REDIS_HOST` y `REDIS_AUTH_TOKEN`, que `app.ops.env` convierte en `DATABASE_URL` y `REDIS_URL` si estas no vienen dadas.
+  - variables nuevas, que las definiciones de tarea de Terraform tienen que usar con estos nombres:
+    - **conexión:** `DATABASE_HOST`, `DATABASE_PORT` (5432 por defecto), `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `REDIS_HOST`, `REDIS_PORT` (6379 por defecto) y `REDIS_AUTH_TOKEN`. `app.ops.env` las convierte en `DATABASE_URL` y en `REDIS_URL` (`rediss://`, con TLS) si estas no vienen dadas;
+    - **usuarios de la base de datos:** cada servicio recibe en `DATABASE_USER` y `DATABASE_PASSWORD` su propio usuario (`myplaylist_api` o `myplaylist_worker`). La tarea de migración recibe en esas dos el usuario maestro de RDS, y además `DATABASE_API_PASSWORD` y `DATABASE_WORKER_PASSWORD`, las contraseñas que `app.ops.db_users` asigna a los usuarios de servicio (D5).
 - **Flujos de GitHub:**
   - `deploy.yml`: entrada `tag`, en el entorno `production`;
   - `preproduction.yml`: entradas `accion` (`probar-carga`, `levantar` o `destruir`), `tag` y `establishments` (50 por defecto), en el entorno `preproduction`;
@@ -623,7 +627,7 @@ classDiagram
 | R001 | entorno: despliegue de `v0.2.0` con aprobación y registro; repetición desde otro equipo | `docs/qa/infra-despliegue.md` |
 | R002 | entorno: lanzar `deploy.yml` desde una rama y sin aprobación; prueba del plan: regla de etiquetas del rol OIDC | `docs/qa/infra-despliegue.md`, `src/infra/tests/deploy.tftest.hcl` |
 | R003 | plan: `redirect-to-https`, TLS 1.2, certificado y sin respuestas de error personalizadas; unitaria: la función `edge` reescribe solo las rutas de la SPA; entorno: `curl` por HTTP y por HTTPS | `src/infra/tests/edge.tftest.hcl`, `src/infra/modules/edge/functions/edge.test.js`, `docs/qa/infra-despliegue.md` |
-| R004 | unitaria: el mando de producción de la imagen no migra; entorno: una sola migración en los registros y revisión `0004` | `src/backend/tests/unit/test_dockerfile.py`, `docs/qa/infra-despliegue.md` |
+| R004 | unitaria: el mando de producción de la imagen no migra; entorno: una sola migración en los registros, la revisión de la cabeza y la primera migración en una base RDS nueva | `src/backend/tests/unit/test_dockerfile.py`, `docs/qa/infra-despliegue.md` |
 | R005 | entorno (preproducción): una migración que falla a propósito y una versión sin comprobación de salud | `docs/qa/infra-resiliencia.md` |
 | R006 | entorno: buscar los valores de los secretos en las imágenes (`docker history`, `inspect`), en los registros y en el repositorio (gitleaks) | `docs/qa/infra-despliegue.md` |
 | R007 | unitaria: validaciones de `production` y `preproduction` en la API y en C6; entorno: despliegue con un secreto de desarrollo | `src/backend/tests/unit/test_config.py`, `src/realtime/test/server.test.ts`, `docs/qa/infra-resiliencia.md` |
