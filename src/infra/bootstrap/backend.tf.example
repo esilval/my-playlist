@@ -1,0 +1,16 @@
+# Tras el primer `terraform apply`, con el estado todavía en local, se copia como
+# `backend.tf` y se migra el estado al bucket que acaba de crear el arranque:
+#
+#   cp backend.tf.example backend.tf
+#   terraform init -migrate-state
+#
+# Después, backend.tf se versiona en un PR. Ver src/infra/README.md.
+terraform {
+  backend "s3" {
+    bucket       = "myplaylist-200oklabs-terraform-state"
+    key          = "bootstrap/terraform.tfstate"
+    region       = "us-east-2"
+    encrypt      = true
+    use_lockfile = true
+  }
+}

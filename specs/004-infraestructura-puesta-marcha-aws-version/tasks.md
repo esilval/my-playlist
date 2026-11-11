@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-11-09  |
-| Estado | Approved · 6fc283f00e73       |
+| Estado | Approved · a1ff298afa43       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -187,7 +187,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T009 — Esqueleto de `src/infra/`, arranque y CI de la infraestructura
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R002
 - **Depende de:** —
 - **Archivos:**
@@ -195,20 +195,26 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `src/infra/bootstrap/*.tf`
   - `src/infra/tests/bootstrap.tftest.hcl`
   - `src/infra/README.md`
+  - `src/infra/.terraform.lock.hcl`, `src/infra/bootstrap/.terraform.lock.hcl` y `src/infra/bootstrap/backend.tf.example`
   - `.github/workflows/ci.yml`
+  - `.gitignore`
   - `.sdd/config.json`
   - `docs/qa/infra-despliegue.md` (el guion, sin resultados)
 - **Hecho cuando:**
   - Pasan:
     - `run "F004_R002_el_rol_de_despliegue_solo_se_asume_desde_los_entornos_de_este_repositorio"`;
-    - `run "F004_R002_el_rol_de_plan_es_de_solo_lectura"`.
+    - `run "F004_R002_el_rol_de_plan_es_de_solo_lectura"`;
+    - `run "F004_R002_sin_crear_el_proveedor_oidc_los_roles_lo_referencian_por_su_arn"`, con `create_github_oidc_provider = false` (D18).
+  - El proveedor por defecto del arranque es us-east-2, y el bucket del estado está en esa región (ADR-0019, D18).
   - El trabajo `infra` del CI corre `terraform fmt -check`, `validate` y `test` y está en `ci`.
   - Con `.sdd/config.json`, `sdd trace` (local y en la versión fijada en el CI) cuenta los ID de `.tftest.hcl` y de los títulos de `docs/qa/`. Si no los cuenta, se usa el comentario con el ID que prevé D15.
   - Los dos diagramas de `plan.md` se dibujan con la CLI de Mermaid sin errores.
   - `src/infra/README.md` recoge:
     - la lista de requisitos previos de D17;
+    - la comprobación previa de las políticas de la organización (D18), con su resultado;
+    - la petición del proveedor OIDC a quien administra la organización, con su fecha y su respuesta;
     - el coste comprobado con AWS Pricing Calculator. Si el total se aparta más de un 20 % del plan, se avisa al usuario.
-  - **El usuario,** con credenciales de administrador, aplica el arranque y delega los servidores de nombres de `200oklabs.com` a Route 53, y `dig NS 200oklabs.com` lo muestra.
+  - **El usuario,** con credenciales de administrador, aplica el arranque y delega los servidores de nombres de `200oklabs.com` a Route 53, y `dig NS 200oklabs.com` lo muestra. El proveedor OIDC puede llegar después: lo exige T018, no T009.
 
 ### T010 — Red `P`
 
@@ -247,7 +253,10 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `src/infra/tests/secrets.tftest.hcl`
 - **Hecho cuando:** pasan:
   - `run "F004_R006_los_secretos_generados_tienen_48_caracteres"`;
-  - `run "F004_R006_youtube_api_key_no_tiene_valor_en_terraform"`.
+  - `run "F004_R006_youtube_api_key_no_tiene_valor_en_terraform"`;
+  - `run "F004_R006_los_secretos_se_escriben_con_solo_escritura"`: cada `aws_secretsmanager_secret_version` usa `secret_string_wo` y ninguna `secret_string`, y los generados son efímeros (D6).
+
+  `src/infra/README.md` lista los valores que, por no tener un atributo de solo escritura, quedan en el estado (por ejemplo, el `auth_token` de ElastiCache) y cómo se rotan.
 
 ### T013 — Cómputo: ECS, ECR, ALB y la tarea de migración
 
@@ -301,7 +310,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `run "F004_R008_identidad_con_dkim_mail_from_y_dmarc"`;
   - `run "F004_R008_rebotes_y_quejas_van_al_tema_de_avisos"`.
 
-  **El usuario** pide la salida del sandbox de SES (D14), y la solicitud queda anotada en `src/infra/README.md` con su fecha.
+  **El usuario** pide la salida del sandbox de SES en us-east-2 (D14, ADR-0019), y la solicitud queda anotada en `src/infra/README.md` con su fecha.
 
 ### T016 — Observabilidad: registros, alarmas, comprobaciones y presupuesto
 
@@ -491,7 +500,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `src/infra/environments/production.tfvars`
   - `src/backend/tests/unit/test_data_policy.py`
 - **Hecho cuando:**
-  - **El negocio** entrega el texto definitivo de la política de tratamiento. Debe incluir la transferencia internacional de datos a EE. UU. (ADR-0006) y la retención de 30 días de los registros con IP (R016).
+  - **El negocio** entrega el texto definitivo de la política de tratamiento. Debe incluir la transferencia internacional de datos a EE. UU. (ADR-0019) y la retención de 30 días de los registros con IP (R016).
   - El texto queda en `src/backend/app/accounts/policy/` con su versión, y `DATA_POLICY_VERSION` de producción la nombra.
   - Pasa `test_F004_R007_production_arranca_con_la_politica_definitiva_y_la_sirve`.
   - El borrador `0000-borrador` sigue sirviendo en local y en la preproducción.

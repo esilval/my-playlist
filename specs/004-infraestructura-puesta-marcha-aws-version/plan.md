@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-11-09         |
-| Estado | Approved · 2022afc0dea4              |
+| Estado | Approved · 9f157f6b263d              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -14,7 +14,7 @@
 
 ## Resumen
 
-Se construye en AWS el entorno de ADR-0006, definido con Terraform en `src/infra/` (ADR-0016). Lo forman CloudFront delante de todo en `myplaylist.200oklabs.com`, ECS Fargate para la API, el trabajador y el tiempo real, RDS PostgreSQL Multi-AZ, ElastiCache Redis y SES.
+Se construye en AWS el entorno de ADR-0019 (us-east-2, que sustituye a las decisiones anteriores de región y de correo), definido con Terraform en `src/infra/` (ADR-0016). Lo forman CloudFront delante de todo en `myplaylist.200oklabs.com`, ECS Fargate para la API, el trabajador y el tiempo real, RDS PostgreSQL Multi-AZ, ElastiCache Redis y SES.
 
 El despliegue lo hace GitHub Actions desde una etiqueta, con aprobación y OIDC (ADR-0017). La observabilidad va en CloudWatch, con alarmas por correo (ADR-0018).
 
@@ -29,7 +29,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | Principio 1: la spec es la fuente de verdad | sí | La contradicción con la etiqueta `v0.1.0` se resolvió aclarando la spec antes de este plan. |
 | Principio 2: todo MUST con tarea, prueba y criterios | sí | Hay dos tipos de prueba. **Automáticas:** pytest, Vitest y `terraform test`. **De entorno:** las verificaciones que solo se pueden hacer contra AWS (despliegue, caídas, copias, alertas y retirada). Estas se documentan en `docs/qa/` con el ID `F004_R0xx`, y `.sdd/config.json` añade `docs/qa/*.md` a las pruebas que lee `sdd trace` (D15). |
 | Principio 3: aislamiento por establecimiento | sí | No se toca RLS. La API y el trabajador se conectan con usuarios propios, miembros de `app_api` y `app_worker`, sin `BYPASSRLS` ni permisos de migración (D5). |
-| Principio 4: datos mínimos y Ley 1581 | sí | Los registros no guardan el texto buscado, cookies, tokens ni contraseñas (D11). Todos los registros se conservan 30 días. La IP solo aparece en los rechazos 401 y 403 (R020). La transferencia a EE. UU. ya la anota ADR-0006. |
+| Principio 4: datos mínimos y Ley 1581 | sí | Los registros no guardan el texto buscado, cookies, tokens ni contraseñas (D11). Todos los registros se conservan 30 días. La IP solo aparece en los rechazos 401 y 403 (R020). La transferencia a EE. UU. ya la anota ADR-0019. |
 | Principio 5: sin instalación | sí | No cambia nada para los usuarios. |
 | Principio 7: decisiones transversales como ADR | sí | La herramienta de infraestructura, el camino de despliegue y la observabilidad se proponen como ADR-0016, ADR-0017 y ADR-0018. |
 | Principio 8: el código vive bajo `src/` | sí | La infraestructura vive en `src/infra/`. Los flujos van en `.github/workflows/` y las pruebas manuales en `docs/qa/`, como hasta ahora. |
@@ -49,11 +49,11 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | ADR-0003: una SPA React con Vite | La SPA se compila con `vite build` y se sirve desde S3 a través de CloudFront (D1). |
 | ADR-0004: PostgreSQL y Redis | RDS PostgreSQL 16, la misma versión mayor del compose, y ElastiCache Redis OSS 7.1. Redis 7 o posterior es lo que pide `EXPIRE NX` (D4). |
 | ADR-0005: Socket.IO y pub/sub en Redis | El cliente usa solo WebSocket (`transports: ["websocket"]`), así que no hacen falta sesiones pegajosas en el ALB. Cada tarea de C6 se suscribe al canal y entrega a sus propias conexiones (D3). |
-| ADR-0006: AWS us-east-1 con contenedores | Toda la topología está en D1 a D4. Hay al menos dos tareas por servicio, en dos zonas. |
+| ADR-0019 (propuesta): AWS con contenedores y correo en us-east-2 | Toda la topología está en D1 a D4, en us-east-2. Hay al menos dos tareas por servicio, en dos zonas. El certificado de CloudFront va en us-east-1, con un proveedor de Terraform con alias (D18). |
 | ADR-0007: autenticación propia | Sin cambios. Las cookies `Secure` ya exigen HTTPS, que da CloudFront (D1). |
 | ADR-0009: RLS | Los usuarios de conexión no tienen `BYPASSRLS` (D5). |
 | ADR-0010: YouTube | Producción usa YouTube. La alarma de cuota (R021) cuenta las unidades que gasta cada llamada (D11). |
-| ADR-0011: correo con SES | SES con el dominio verificado, DKIM y un MAIL FROM propio (D8). |
+| ADR-0019 (propuesta): correo con SES en us-east-2 | SES en us-east-2, con el dominio verificado, DKIM y un MAIL FROM propio (D14). |
 | ADR-0013: código bajo `src/` | `src/infra/`. |
 | ADR-0014: ticket de tiempo real | `REALTIME_TICKET_SECRET` está en Secrets Manager y es el mismo para la API, el trabajador y C6 (D6). |
 | ADR-0015: varios procesos | `API_WORKERS` es igual a las vCPU de la tarea (2). Las conexiones caben en `max_connections` de RDS (D3, D4). |
@@ -72,7 +72,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
 - **Contexto:** la SPA, la API y el tiempo real comparten origen en local (D9 de 001). La cookie de sesión es `SameSite=Lax`, la API comprueba `Origin` contra `PUBLIC_BASE_URL`, y la SPA abre Socket.IO contra `window.location.origin`. R003 pide solo HTTPS bajo el dominio.
 - **Decisión:**
-  - **Dirección:** `myplaylist.200oklabs.com` (la eligió el usuario), con una distribución de CloudFront, certificado de ACM en us-east-1 y registros alias en Route 53. Es la dirección que llevan los QR.
+  - **Dirección:** `myplaylist.200oklabs.com` (la eligió el usuario), con una distribución de CloudFront, certificado de ACM en us-east-1 (CloudFront solo admite los de esa región; el resto del servicio está en us-east-2, ADR-0019) y registros alias en Route 53. Es la dirección que llevan los QR.
   - **Rutas de CloudFront:**
     - `/api/*` va al ALB, al grupo de destino de la API, sin caché y reenviando cookies, cabeceras y la cadena de consulta;
     - `/socket.io/*` va al ALB, al grupo de destino de C6, sin caché y con WebSocket;
@@ -111,7 +111,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
 ### D3 — Servicios de ECS y su capacidad
 
-- **Contexto:** Q2 pide unas 870 peticiones por segundo en la hora pico (Q2 de 003). En local, cuatro procesos daban unas 600 peticiones por segundo con p95 de 95 ms, en un portátil compartido con PostgreSQL y k6 (D11 de 003). Q3 y ADR-0006 piden al menos dos tareas por servicio.
+- **Contexto:** Q2 pide unas 870 peticiones por segundo en la hora pico (Q2 de 003). En local, cuatro procesos daban unas 600 peticiones por segundo con p95 de 95 ms, en un portátil compartido con PostgreSQL y k6 (D11 de 003). Q3 y ADR-0019 piden al menos dos tareas por servicio.
 - **Decisión:** un clúster de ECS Fargate (x86_64), con cada servicio repartido en las dos zonas.
 
   | Servicio | Tarea | Tareas | Mando |
@@ -182,7 +182,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
 - **Decisión:**
   - **Los secretos viven en Secrets Manager**, uno por valor y por entorno:
-    - `REALTIME_TICKET_SECRET`, `DEVICE_TOKEN_SECRET` y el token de Redis, que genera Terraform con `random_password` (48 caracteres);
+    - `REALTIME_TICKET_SECRET`, `DEVICE_TOKEN_SECRET`, el token de Redis y las contraseñas de los usuarios de servicio. Los genera Terraform con un recurso **efímero** (`ephemeral "random_password"`, 48 caracteres) y los guarda con el atributo de **solo escritura** `secret_string_wo` de `aws_secretsmanager_secret_version`. Así no quedan en el estado de Terraform (ver Consecuencias);
     - las contraseñas de los dos usuarios de los servicios; la del usuario maestro la gestiona RDS (D5);
     - `YOUTUBE_API_KEY`, que el administrador introduce una vez con `aws secretsmanager put-secret-value`;
     - la cabecera secreta entre CloudFront y el ALB.
@@ -199,7 +199,9 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
   - Parameter Store SecureString: más barato, pero sin rotación ni integración con el usuario maestro gestionado de RDS.
   - Variables de entorno en claro en la definición de tarea: se ven en la consola y en la API de ECS.
 - **Consecuencias:**
-  - Los secretos generados también quedan en el estado de Terraform, que está cifrado y es privado (ADR-0016).
+  - **Los secretos generados no quedan en el estado de Terraform:** son efímeros y se escriben con atributos de solo escritura. Hace falta, porque el rol de plan lee el estado y lo puede asumir el flujo de cualquier PR de una rama de este repositorio (D16).
+  - **Excepción, el token de Redis:** quien lo usa como valor normal (`auth_token` del grupo de replicación de ElastiCache) lo guarda en el estado si el recurso no tiene variante de solo escritura. T012 comprueba recurso por recurso qué valores quedan en el estado y los lista en `src/infra/README.md`. Si queda alguno, se fija y se rota a mano con la CLI, fuera de Terraform.
+  - **Rotar un secreto efímero** exige subir a mano su `secret_string_wo_version`.
   - Unos 8 secretos por entorno, a US$0,40 cada uno.
 
 ### D7 — La aplicación valida la configuración de cada entorno
@@ -421,14 +423,14 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
   - **Comentario en el PR:** `infra.yml` comenta en el PR el `terraform plan` de producción, con un rol de solo lectura por OIDC.
   - **Versiones fijas:** Terraform en `src/infra/.terraform-version`, y los proveedores en `.terraform.lock.hcl`, que se versiona.
 - **Alternativas descartadas:** Terraform Cloud para planes y estado. Es otro servicio y otra cuenta, cuando el estado ya vive en S3 (ADR-0016).
-- **Consecuencias:** el rol de solo lectura del plan puede ver la configuración de la cuenta, pero no los valores de los secretos.
+- **Consecuencias:** el rol de plan lee la configuración de la cuenta y el estado completo, y lo puede asumir el flujo de cualquier PR de una rama de este repositorio. Por eso el estado no guarda los secretos generados (D6). Lo que queda en él, como ARN, nombres y direcciones, no da acceso por sí solo.
 
 ### D17 — Arranque único y requisitos previos manuales
 
 - **Decisión:** `src/infra/bootstrap/` crea, una sola vez y con credenciales de administrador desde el equipo del desarrollador:
   - el bucket del estado;
   - la zona de Route 53 de `200oklabs.com`;
-  - el proveedor OIDC de GitHub;
+  - el proveedor OIDC de GitHub, si la organización de AWS lo permite (D18);
   - los roles de despliegue y de plan, limitados a este repositorio y sus entornos.
 
   Lo que no se puede automatizar queda como lista en `src/infra/README.md`:
@@ -441,11 +443,30 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 - **Alternativas descartadas:** crear los entornos de GitHub con Terraform (proveedor `github`). Exige un token de GitHub de administrador en el estado, para seis ajustes que se hacen una vez.
 - **Consecuencias:** el arranque es la única parte que no pasa por el flujo con aprobación. Se documenta y se revisa en su PR.
 
+### D18 — Lo que imponen las políticas de la organización de AWS
+
+- **Contexto:** la cuenta del negocio (`955519187424`) pertenece a una organización de AWS administrada desde otra cuenta. Sus políticas (SCP), comprobadas con el simulador de políticas y con llamadas `--dry-run`, imponen dos cosas:
+  - los recursos regionales solo se pueden crear en us-east-2, y los servicios globales se piden a us-east-1;
+  - no se pueden crear, ver ni listar proveedores de identidad, OIDC ni SAML (`p-n79p9if6`).
+- **Decisión:**
+  - **Región:** el proveedor de Terraform por defecto es us-east-2 (ADR-0019). Un proveedor con alias `us_east_1` se usa solo para el certificado de ACM de CloudFront.
+  - **Bucket del estado:** está en us-east-2, y los `backend` de los entornos lo apuntan ahí.
+  - **El proveedor OIDC de GitHub** lo crea quien administra la organización, o lo permite con una excepción; el usuario lo pidió. El arranque tiene la variable `create_github_oidc_provider`:
+    - con `true`, lo crea;
+    - con `false`, solo lo referencia por su ARN, que es fijo: `arn:aws:iam::<cuenta>:oidc-provider/token.actions.githubusercontent.com`.
+
+    Así el resto del arranque (el bucket, la zona y los roles) se aplica sin esperar a la excepción. Los flujos de despliegue (T018) no funcionan hasta que exista el proveedor.
+  - **Comprobación previa:** antes de cada arranque, una comprobación con `aws iam simulate-principal-policy` de las acciones que necesita, en us-east-2 y en us-east-1, documentada en `src/infra/README.md`.
+- **Alternativas descartadas:**
+  - Desplegar con las claves de un usuario IAM: ADR-0017 lo descartó, porque son credenciales de larga duración.
+  - Pedir también la excepción para us-east-1: el usuario prefirió adaptarse a us-east-2 (ADR-0019).
+- **Consecuencias:** T018 depende de que exista el proveedor OIDC. Si la organización cambia sus políticas, se repite la comprobación previa antes de aplicar nada.
+
 ## Componentes afectados
 
 | Componente | Cambio | Requisitos que cubre |
 | ---------- | ------ | -------------------- |
-| `src/infra/bootstrap/` | Bucket del estado, zona de Route 53, proveedor OIDC y roles de despliegue y de plan (D17) | R001, R002 |
+| `src/infra/bootstrap/` | Bucket del estado en us-east-2, zona de Route 53, proveedor OIDC (opcional, D18) y roles de despliegue y de plan (D17) | R001, R002 |
 | `src/infra/modules/network` | VPC, subredes en dos zonas y grupos de seguridad (D2) | R009 |
 | `src/infra/modules/edge` | CloudFront, el certificado, los alias de Route 53, el bucket de la SPA, la función `edge` (rutas de la SPA y mantenimiento), el KeyValueStore y la política que reenvía `CloudFront-Viewer-Address` (D1, D10, D11) | R003, R014, R015, R020 |
 | `src/infra/modules/data` | RDS Multi-AZ con sus copias y ElastiCache con réplica (D4) | R009, R010 |
@@ -625,7 +646,7 @@ classDiagram
 | Requisito | Tipo de prueba | Dónde vive |
 | --------- | -------------- | ---------- |
 | R001 | entorno: despliegue de `v0.2.0` con aprobación y registro; repetición desde otro equipo | `docs/qa/infra-despliegue.md` |
-| R002 | entorno: lanzar `deploy.yml` desde una rama y sin aprobación; prueba del plan: regla de etiquetas del rol OIDC | `docs/qa/infra-despliegue.md`, `src/infra/tests/deploy.tftest.hcl` |
+| R002 | entorno: lanzar `deploy.yml` desde una rama y sin aprobación; prueba del plan: la confianza del rol de despliegue y la del de plan | `docs/qa/infra-despliegue.md`, `src/infra/tests/bootstrap.tftest.hcl` |
 | R003 | plan: `redirect-to-https`, TLS 1.2, certificado y sin respuestas de error personalizadas; unitaria: la función `edge` reescribe solo las rutas de la SPA; entorno: `curl` por HTTP y por HTTPS | `src/infra/tests/edge.tftest.hcl`, `src/infra/modules/edge/functions/edge.test.js`, `docs/qa/infra-despliegue.md` |
 | R004 | unitaria: el mando de producción de la imagen no migra; entorno: una sola migración en los registros, la revisión de la cabeza y la primera migración en una base RDS nueva | `src/backend/tests/unit/test_dockerfile.py`, `docs/qa/infra-despliegue.md` |
 | R005 | entorno (preproducción): una migración que falla a propósito y una versión sin comprobación de salud | `docs/qa/infra-resiliencia.md` |
@@ -649,7 +670,7 @@ classDiagram
 
 ## Coste estimado
 
-Son precios de lista bajo demanda en us-east-1, que yo recuerdo y no he calculado todavía con la calculadora oficial. Son el orden de magnitud con el que se aprueba el plan. La primera tarea de infraestructura los comprueba con AWS Pricing Calculator y deja las cifras comprobadas en `src/infra/README.md`. Si el total se aparta más de un 20 % de esta tabla, se avisa al usuario antes de seguir.
+Son precios de lista bajo demanda en us-east-1, que coinciden o casi con los de us-east-2 (ADR-0019), que yo recuerdo y no he calculado todavía con la calculadora oficial. Son el orden de magnitud con el que se aprueba el plan. La primera tarea de infraestructura los comprueba con AWS Pricing Calculator y deja las cifras comprobadas en `src/infra/README.md`. Si el total se aparta más de un 20 % de esta tabla, se avisa al usuario antes de seguir.
 
 | Recurso | Producción, en reposo (US$/mes) |
 | ------- | ------------------------------- |
