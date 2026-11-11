@@ -177,7 +177,8 @@ def test_F004_R011_search_unavailable_cuenta_cada_503() -> None:
 
 def test_F004_R011_la_api_registra_cada_peticion(capsys: pytest.CaptureFixture[str]) -> None:
     # Sin base de datos, la búsqueda puede acabar en 500: también se registra.
-    with TestClient(create_app(Settings(_env_file=None)), raise_server_exceptions=False) as client:
+    settings = Settings(_env_file=None)
+    with TestClient(create_app(settings), raise_server_exceptions=False) as client:
         client.get("/api/health")
         client.get("/api/public/establishments/ABCDEFGHIJ/search", params={"q": SECRET_QUERY})
 
@@ -185,7 +186,8 @@ def test_F004_R011_la_api_registra_cada_peticion(capsys: pytest.CaptureFixture[s
     entries = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
     [health] = [entry for entry in entries if entry.get("route") == "/api/health"]
     assert health["status"] == 200
-    assert health["_aws"]["CloudWatchMetrics"][0]["Namespace"] == "MyPlaylist/local"
+    # El del entorno en que corre: `local` en un equipo, `test` en el CI.
+    assert health["_aws"]["CloudWatchMetrics"][0]["Namespace"] == f"MyPlaylist/{settings.env}"
     # La plantilla lleva el prefijo del router incluido, sin el código ni la consulta.
     [search] = [entry for entry in entries if entry.get("route") == SEARCH]
     assert search["event"] == "request"
