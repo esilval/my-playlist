@@ -8,14 +8,12 @@ import argparse
 import asyncio
 import logging
 import os
-import sys
 from datetime import timedelta
 from pathlib import Path
 
-from pydantic import ValidationError
 from sqlalchemy import text
 
-from app.shared.config import Settings, get_settings
+from app.shared.config import Settings, settings_or_exit
 from app.shared.db import Database
 from app.shared.email.factory import email_sender_from_settings
 from app.shared.outbox import OutboxDispatcher
@@ -39,17 +37,6 @@ async def run_once(db: Database, dispatcher: OutboxDispatcher, *, purge: bool) -
     if purge:
         await purge_login_attempts(db)
     return sent
-
-
-def settings_or_exit() -> Settings:
-    """Con una configuración inválida, termina con solo los mensajes de error, como la API:
-    el error de pydantic incluye la entrada, y con ella los secretos (feature 004, R016)."""
-    try:
-        return get_settings()
-    except ValidationError as error:
-        messages = "; ".join(str(item["msg"]) for item in error.errors(include_input=False))
-        sys.stderr.write(f"configuración inválida: {messages}\n")
-        raise SystemExit(1) from None
 
 
 async def main(*, once: bool, settings: Settings | None = None) -> None:

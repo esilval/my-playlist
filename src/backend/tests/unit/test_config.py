@@ -3,7 +3,13 @@
 import pytest
 from pydantic import ValidationError
 
-from app.shared.config import LOCAL_DEVICE_TOKEN_SECRET, LOCAL_REALTIME_TICKET_SECRET, Settings
+from app.shared.config import (
+    LOCAL_DEVICE_TOKEN_SECRET,
+    LOCAL_REALTIME_TICKET_SECRET,
+    Settings,
+    get_settings,
+    settings_or_exit,
+)
 
 SECRET = "secreto-de-produccion-de-al-menos-32-caracteres"
 
@@ -113,3 +119,42 @@ def test_F004_R022_preproduction_admite_el_catalogo_falso_smtp_y_la_politica_en_
     assert _preproduction(email_from="MyPlaylist <no-responder@example.com>").env == (
         "preproduction"
     )
+
+
+def test_F004_R016_settings_or_exit_escribe_solo_los_mensajes_y_termina_con_1(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    visible = "secreto-del-ticket-que-no-debe-aparecer-en-el-registro"
+    for name, value in {
+        "ENV": "production",
+        "EMAIL_BACKEND": "ses",
+        "DATA_POLICY_VERSION": "2026-10",
+        "REALTIME_TICKET_SECRET": visible,
+        "CATALOG_PROVIDER": "youtube",
+        "YOUTUBE_API_KEY": "clave-de-youtube-que-no-debe-aparecer",
+        "DEVICE_TOKEN_SECRET": "corto",
+    }.items():
+        monkeypatch.setenv(name, value)
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(SystemExit) as exit_info:
+            settings_or_exit()
+    finally:
+        get_settings.cache_clear()
+
+    assert exit_info.value.code == 1
+    # Sin el error de pydantic encadenado, que lleva la entrada.
+    assert exit_info.value.__suppress_context__ is True
+    err = capsys.readouterr().err
+    assert err.startswith("configuración inválida: ")
+    assert "DEVICE_TOKEN_SECRET" in err
+    for value in (visible, "clave-de-youtube-que-no-debe-aparecer", "'corto'"):
+        assert value not in err
+
+    # Con una configuración válida, la devuelve.
+    monkeypatch.setenv("ENV", "local")
+    monkeypatch.setenv("CATALOG_PROVIDER", "fake")
+    try:
+        assert settings_or_exit().env == "local"
+    finally:
+        get_settings.cache_clear()
