@@ -240,6 +240,14 @@ jobs:
         with:
           terraform_version: ${{ steps.version.outputs.terraform }}
       - run: terraform fmt -check -recursive
+      # Lo que terraform test no puede ver (D6): un secreto generado fuera de un recurso
+      # efímero, o escrito sin el atributo de solo escritura, quedaría en el estado.
+      - name: Secretos fuera del estado
+        run: |
+          if grep -rnE 'resource\s+"random_password"|secret_string\s*=' modules/; then
+            echo "Un secreto quedaría en el estado de Terraform (plan D6)." >&2
+            exit 1
+          fi
       - name: Validar el arranque
         working-directory: src/infra/bootstrap
         run: |
