@@ -36,6 +36,7 @@ from app.sessions.interface import (
     UnknownTrack,
 )
 from app.shared.db import Database
+from app.shared.metrics import InMemoryMetrics
 
 pytestmark = pytest.mark.anyio
 
@@ -155,7 +156,12 @@ async def ctx(engine: AsyncEngine, database_url: str) -> AsyncIterator[Ctx]:
             open=OpenMusicSession(unit_of_work=unit_of_work, publisher=publisher, clock=clock),
             close=CloseMusicSession(unit_of_work=unit_of_work, publisher=publisher, clock=clock),
             claim=ClaimPlayer(unit_of_work=unit_of_work, publisher=publisher, clock=clock),
-            report=ReportPlayerEvent(unit_of_work=unit_of_work, publisher=publisher, clock=clock),
+            report=ReportPlayerEvent(
+                unit_of_work=unit_of_work,
+                publisher=publisher,
+                clock=clock,
+                metrics=InMemoryMetrics(),
+            ),
             owner=OwnerContext(
                 account_id=uuid.uuid4(), establishment_id=establishment_id, email_verified=True
             ),

@@ -23,4 +23,8 @@ RUN useradd --system --uid 1000 app
 USER app
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# El mando de producción (feature 004, plan D3, D6, D8): compone las URL de conexión con
+# las partes que inyecta ECS, no migra (las migraciones son una tarea aparte) y no escribe
+# el registro de acceso de uvicorn, que lleva la cadena de consulta con el texto buscado
+# (R016). El compose lo sustituye por el suyo, que migra al arrancar.
+CMD ["sh", "-c", "exec python -m app.ops.env uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-2} --no-access-log"]

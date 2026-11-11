@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-11-09  |
-| Estado | Approved · 85a9eb7dab88       |
+| Estado | Approved · 9072a98771a3       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -29,14 +29,14 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T001 — Configuración: `ENV=preproduction` y validaciones de producción `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R007, R022
 - **Depende de:** —
 - **Archivos:**
   - `src/backend/app/shared/config.py`
   - `src/backend/tests/unit/test_config.py`
   - `src/realtime/src/server.ts`
-  - `src/realtime/src/server.test.ts`
+  - `src/realtime/test/server.test.ts`
 - **Hecho cuando:** pasan:
   - `test_F004_R007_production_rechaza_un_remitente_de_example_com`;
   - `test_F004_R007_production_rechaza_una_url_publica_sin_https_o_localhost`;
@@ -48,11 +48,12 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T002 — Puerto `Metrics` y su implementación EMF `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R011
 - **Depende de:** —
 - **Archivos:**
   - `src/backend/app/shared/metrics.py`
+  - `src/backend/app/shared/infrastructure/__init__.py`
   - `src/backend/app/shared/infrastructure/emf.py`
   - `src/backend/tests/unit/test_metrics.py`
 - **Hecho cuando:**
@@ -65,7 +66,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T003 — Registro por petición sin datos sensibles
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R011, R016, R020
 - **Depende de:** T002
 - **Archivos:**
@@ -78,29 +79,37 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `test_F004_R016_el_registro_no_escribe_cabeceras_cookies_ni_cuerpos`;
   - `test_F004_R020_solo_los_401_y_403_llevan_la_ip`;
   - `test_F004_R020_la_ip_sale_de_cloudfront_viewer_address_y_no_de_x_forwarded_for`, con un `X-Forwarded-For` falso que no aparece en el registro;
-  - `test_F004_R011_search_unavailable_cuenta_cada_503`.
+  - `test_F004_R011_search_unavailable_cuenta_cada_503`;
+  - `test_F004_R016_el_arranque_con_configuracion_invalida_no_escribe_valores`: con una configuración inválida, la API termina con código 1 y escribe solo los mensajes de error, sin los valores de la entrada (D7).
 
 ### T004 — Métricas del reproductor y `published_at` en los eventos
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R011
 - **Depende de:** T002
 - **Archivos:**
   - `src/backend/app/sessions/application/` (el caso de uso de los eventos del reproductor)
+  - `src/backend/app/sessions/domain/music_session.py`
+  - `src/backend/app/sessions/domain/queue.py`
+  - `src/backend/app/sessions/infrastructure/repositories.py`
   - `src/backend/app/sessions/infrastructure/redis_publisher.py`
+  - `src/backend/migrations/versions/0005_player_claimed_at.py`
   - `src/backend/app/main.py`
   - `src/backend/tests/integration/test_track_metrics.py`
+  - `src/backend/tests/integration/test_event_publisher.py` (el contrato de 002, ampliado con `published_at`)
 - **Hecho cuando:** pasan:
   - `test_F004_R011_started_y_failed_emiten_track_started_y_track_failed`;
   - `test_F004_R011_track_gap_mide_desde_el_finished_at_de_la_anterior`;
   - `test_F004_R011_track_gap_no_se_mide_si_la_cola_estaba_vacia_o_la_anterior_se_salto`;
-  - `test_F004_R011_cada_evento_publicado_lleva_published_at`.
+  - `test_F004_R011_track_gap_no_se_mide_tras_una_toma_de_control`, con una toma de control a mitad de canción;
+  - `test_F004_R011_cada_evento_publicado_lleva_published_at`;
+  - `test_F004_R011_la_puesta_en_marcha_guarda_player_claimed_at`.
 
-  Las pruebas de eventos de 002 y 003 siguen en verde.
+  `alembic upgrade head` y `alembic downgrade -1` funcionan con la `0005`. Las pruebas de eventos de 002 y 003, y la de RLS de `test_schema.py`, siguen en verde.
 
 ### T005 — Contador de la cuota de YouTube
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R021
 - **Depende de:** T002
 - **Archivos:**
@@ -117,7 +126,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T006 — Registros del trabajador sin direcciones `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R016
 - **Depende de:** —
 - **Archivos:**
@@ -126,19 +135,20 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `src/backend/tests/unit/test_worker_logs.py`
 - **Hecho cuando:** pasan:
   - `test_F004_R016_el_trabajador_registra_plantilla_e_id_sin_la_direccion`;
-  - `test_F004_R016_un_envio_fallido_no_escribe_el_contenido_del_correo`.
+  - `test_F004_R016_un_envio_fallido_no_escribe_el_contenido_del_correo`;
+  - `test_F004_R016_el_trabajador_con_configuracion_invalida_no_escribe_valores`: el trabajador arranca con la misma protección que la API (D7).
 
 ### T007 — Tiempo real: métricas y `/socket.io/health`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R011, R013
 - **Depende de:** T001
 - **Archivos:**
   - `src/realtime/src/metrics.ts`
-  - `src/realtime/src/metrics.test.ts`
+  - `src/realtime/test/metrics.test.ts`
   - `src/realtime/src/server.ts`
   - `src/realtime/src/relay.ts`
-  - `src/realtime/src/server.test.ts`
+  - `src/realtime/test/server.test.ts`
 - **Hecho cuando:** pasan:
   - `F004_R011 cada 60 s escribe Connections, EventsRelayed, RelayDelay y RedisErrors en EMF`;
   - `F004_R011 RelayDelay se mide desde published_at y se omite si el evento no lo trae`;
@@ -148,7 +158,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T008 — Usuarios de la base de datos, URL de conexión y mando de la imagen `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R004, R006, R016
 - **Depende de:** —
 - **Archivos:**

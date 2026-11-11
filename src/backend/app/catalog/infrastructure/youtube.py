@@ -4,6 +4,8 @@
 - La consulta de una referencia usa `videos.list` y comprueba `status.embeddable`, para
   validar un pedido sin fiarse del navegador (S4, R014).
 
+Cada llamada que llega a YouTube suma su coste a la cuota del día (R021 de 004).
+
 Cada llamada espera como mucho 1,5 s, dentro de los 2 s de Q1. Ni la clave ni el texto
 buscado se escriben en el log ni en los mensajes de error (constitución): la clave viaja
 en una cabecera, no en la URL, y el cliente HTTP no registra sus peticiones.
@@ -13,7 +15,7 @@ import html
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Protocol
 
 import anyio
 import httpx2
@@ -38,6 +40,10 @@ REF_PREFIX = "yt:"
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 
+class QuotaCounter(Protocol):
+    async def add(self, endpoint: str) -> int | None: ...
+
+
 def _ref(video_id: str) -> str:
     return f"{REF_PREFIX}{video_id}"
 
@@ -57,10 +63,12 @@ class YouTubeCatalog:
         api_key: str,
         client: httpx2.AsyncClient | None = None,
         total_timeout: float = TOTAL_TIMEOUT,
+        quota: QuotaCounter | None = None,
     ) -> None:
         self._key = api_key
         self._client = client or httpx2.AsyncClient(timeout=TIMEOUT)
         self._total_timeout = total_timeout
+        self._quota = quota
 
     async def _get(self, endpoint: str, params: dict[str, str | int]) -> dict[str, Any]:
         try:
@@ -77,6 +85,9 @@ class YouTubeCatalog:
             # Sin la URL: lleva el texto buscado.
             logger.warning("YouTube no respondió a %s: %s", endpoint, type(error).__name__)
             raise CatalogUnavailable from None
+        # Con respuesta, la llamada llegó a YouTube y gasta cuota, también si es un error.
+        if self._quota is not None:
+            await self._quota.add(endpoint)
         status = response.status_code
         if status != 200:
             if status >= 500 or status in UNAVAILABLE_4XX:

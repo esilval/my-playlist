@@ -3,6 +3,7 @@
 // otra sala: las salas las decide siempre el servidor.
 import type { Server, Socket } from "socket.io";
 
+import type { RealtimeMetrics } from "./metrics.js";
 import { InvalidTicket, verifyTicket, type TicketRole } from "./ticket.js";
 
 export interface SocketData {
@@ -36,10 +37,17 @@ export function requireTicket(secret: string, nowSeconds: () => number) {
   };
 }
 
-export function useEstablishmentRooms(io: Server, secret: string, nowSeconds: () => number): void {
+export function useEstablishmentRooms(
+  io: Server,
+  secret: string,
+  nowSeconds: () => number,
+  metrics?: RealtimeMetrics,
+): void {
   io.use(requireTicket(secret, nowSeconds));
   io.on("connection", (socket) => {
     const { establishmentId } = socket.data as SocketData;
     void socket.join(roomFor(establishmentId));
+    metrics?.onConnect();
+    socket.on("disconnect", () => metrics?.onDisconnect());
   });
 }

@@ -23,10 +23,12 @@ from app.shared.db import Database
 ONE_OPEN_INDEX = "music_session_one_open_idx"
 
 _SESSION_COLUMNS = (
-    "id, establishment_id, opened_at, closed_at, player_epoch, player_seen_at, version"
+    "id, establishment_id, opened_at, closed_at, player_epoch, player_seen_at, version, "
+    "player_claimed_at"
 )
 _ITEM_COLUMNS = (
-    "id, position, track_ref, title, state, failure_reason, started_at, finished_at, requested_by"
+    "id, position, track_ref, title, state, failure_reason, started_at, finished_at, requested_by, "
+    "created_at"
 )
 
 
@@ -38,6 +40,7 @@ def _session(row: RowMapping, items: CursorResult[Any]) -> MusicSession:
         closed_at=row["closed_at"],
         player_epoch=row["player_epoch"],
         player_seen_at=row["player_seen_at"],
+        player_claimed_at=row["player_claimed_at"],
         version=row["version"],
         items=[
             QueueItem(
@@ -50,6 +53,7 @@ def _session(row: RowMapping, items: CursorResult[Any]) -> MusicSession:
                 started_at=item["started_at"],
                 finished_at=item["finished_at"],
                 requested_by=item["requested_by"],
+                created_at=item["created_at"],
             )
             for item in items.mappings()
         ],
@@ -130,13 +134,15 @@ class SqlSessionsRepository:
         await self._connection.execute(
             text(
                 "UPDATE music_session SET closed_at = :closed_at, player_epoch = :epoch, "
-                "player_seen_at = :seen_at, version = :version WHERE id = :id"
+                "player_seen_at = :seen_at, version = :version, "
+                "player_claimed_at = :claimed_at WHERE id = :id"
             ),
             {
                 "id": session.id,
                 "closed_at": session.closed_at,
                 "epoch": session.player_epoch,
                 "seen_at": session.player_seen_at,
+                "claimed_at": session.player_claimed_at,
                 "version": session.version,
             },
         )

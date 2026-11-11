@@ -8,12 +8,14 @@ import argparse
 import asyncio
 import logging
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
 
+from pydantic import ValidationError
 from sqlalchemy import text
 
-from app.shared.config import get_settings
+from app.shared.config import Settings, get_settings
 from app.shared.db import Database
 from app.shared.email.factory import email_sender_from_settings
 from app.shared.outbox import OutboxDispatcher
@@ -39,8 +41,19 @@ async def run_once(db: Database, dispatcher: OutboxDispatcher, *, purge: bool) -
     return sent
 
 
-async def main(*, once: bool) -> None:
-    settings = get_settings()
+def settings_or_exit() -> Settings:
+    """Con una configuración inválida, termina con solo los mensajes de error, como la API:
+    el error de pydantic incluye la entrada, y con ella los secretos (feature 004, R016)."""
+    try:
+        return get_settings()
+    except ValidationError as error:
+        messages = "; ".join(str(item["msg"]) for item in error.errors(include_input=False))
+        sys.stderr.write(f"configuración inválida: {messages}\n")
+        raise SystemExit(1) from None
+
+
+async def main(*, once: bool, settings: Settings | None = None) -> None:
+    settings = settings or settings_or_exit()
     db = Database.from_url(settings.database_url, role="app_worker")
     dispatcher = OutboxDispatcher(db, email_sender_from_settings(settings))
     loop = asyncio.get_running_loop()
@@ -74,5 +87,6 @@ async def main(*, once: bool) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Trabajador de la bandeja de salida")
     parser.add_argument("--once", action="store_true", help="procesa un lote y termina")
+    once = parser.parse_args().once
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(main(once=parser.parse_args().once))
+    asyncio.run(main(once=once, settings=settings_or_exit()))

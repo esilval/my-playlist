@@ -6,6 +6,7 @@ Redis solo transporta: nada de lo publicado es la única copia de un dato (S10).
 """
 
 import json
+import time
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -22,14 +23,17 @@ def channel_for(establishment_id: UUID) -> str:
 
 
 def event_message(event: SessionEvent) -> str:
-    """El cuerpo del evento: `{type, session_id, version, …}` con los datos del evento.
-    Solo lleva lo que se muestra en pantalla, nunca datos de la cuenta (ADR-0014)."""
+    """El cuerpo del evento: `{type, session_id, version, published_at, …}` con los datos
+    del evento. Solo lleva lo que se muestra en pantalla, nunca datos de la cuenta
+    (ADR-0014). `published_at`, en ms desde la época, deja medir al tiempo real cuánto
+    tarda en entregarlo (RelayDelay, feature 004, plan D11)."""
     return json.dumps(
         {
             **event.data,
             "type": str(event.type),
             "session_id": str(event.session_id),
             "version": event.version,
+            "published_at": int(time.time() * 1000),
         },
         separators=(",", ":"),
     )

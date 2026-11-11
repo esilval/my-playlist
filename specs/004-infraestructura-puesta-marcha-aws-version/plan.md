@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-11-09         |
-| Estado | Approved · 8e46bed2a0f0              |
+| Estado | Approved · 9a306a42ec05              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -213,7 +213,9 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
   - **C6:** trata igual `preproduction` y `production`.
   - **Si un valor falla:** cada error ya nombra la variable. El proceso termina con código distinto de 0, la tarea no supera la comprobación de salud y el «circuit breaker» devuelve el servicio a la revisión anterior. El flujo de despliegue muestra el motivo de parada de la tarea y su última línea de registro (R007).
 - **Alternativas descartadas:** comprobar la configuración solo en el flujo de despliegue. Se podría saltar con un despliegue manual, y la aplicación es la que sabe qué necesita.
-- **Consecuencias:** las pruebas de `config.py` cubren los casos nuevos.
+- **Consecuencias:**
+  - Las pruebas de `config.py` cubren los casos nuevos.
+  - El error de validación de pydantic incluye la entrada, y con ella los secretos. Por eso la API y el trabajador, al arrancar con una configuración inválida, escriben solo los mensajes de error y terminan con código 1.
 
 ### D8 — Migraciones como una tarea aparte, antes de actualizar los servicios
 
@@ -288,7 +290,13 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
     - `RequestLatency` (ms, por `Route`);
     - `SearchUnavailable`, cada `503 search_unavailable`;
     - `YouTubeQuotaUsed`: el total del día de la cuota, que se reinicia a medianoche de la hora del Pacífico. Es un contador de Redis `catalog:youtube-units:{día}`, al que el adaptador de YouTube suma lo que cuesta cada llamada: 100 por `search.list` y 1 por `videos.list`;
-    - `TrackStarted`, `TrackFailed` y `TrackGap`. `TrackGap` son los ms entre el `finished_at` de la canción anterior de la sesión y el `started_at` de la nueva; solo se mide si la anterior terminó sola y la cola no estaba vacía.
+    - `TrackStarted`, `TrackFailed` y `TrackGap`. `TrackStarted` cuenta cada inicio que el servidor acepta, también el de una canción que vuelve a empezar tras una toma de control; `TrackFailed` cuenta cada fallo.
+    - `TrackGap` son los ms entre el `finished_at` de la canción anterior de la sesión y el `started_at` de la nueva. Solo se mide si se cumplen las tres condiciones:
+      - la anterior terminó sola (`played`, no saltada);
+      - la nueva ya estaba en la cola cuando terminó la anterior (`queue_item.created_at`), así que la cola no estaba vacía;
+      - el reproductor es el mismo desde que terminó la anterior: `music_session.player_claimed_at`, la hora de la última toma de control, no es posterior al `finished_at` de la anterior.
+
+      Así no cuentan una recarga ni una toma de control a mitad de canción, que la reinician (R010 de 002), ni la vuelta del reproductor tras una ausencia. En esos casos la cifra mediría el tiempo desde que terminó la anterior, no un cambio de canción, y haría saltar la alarma de SG5 sin motivo.
   - **Puerto:** las métricas de dominio (las canciones) se emiten por un puerto `Metrics` en `app/shared/metrics.py`, que la aplicación recibe por inyección, igual que el publicador de eventos (S1). Su implementación EMF vive en infraestructura, y las pruebas usan una en memoria.
   - **Eventos:** el publicador de Redis añade `published_at` (ms desde la época) a cada mensaje. Es un campo nuevo que C6 ignora si no está.
   - **C6:** cada 60 s escribe una línea EMF con:
@@ -451,8 +459,8 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | `.github/workflows/infra.yml`, `.github/workflows/ci.yml` | Plan y `apply` de la infraestructura; el trabajo `infra` (D9, D16) | R001 |
 | `src/backend/app/shared/config.py` | `ENV=preproduction` y validaciones nuevas (D7) | R007, R022 |
 | `src/backend/app/shared/observability.py` | Middleware de registro por petición y formato EMF (D11) | R011, R016, R020 |
-| `src/backend/app/shared/metrics.py` | Puerto `Metrics` e implementaciones EMF y en memoria (D11) | R011 |
-| `src/backend/app/sessions/application/` (eventos del reproductor) | `TrackStarted`, `TrackFailed` y `TrackGap` por el puerto (D11) | R011 |
+| `src/backend/app/shared/metrics.py`, `src/backend/app/shared/infrastructure/emf.py` | Puerto `Metrics` y su implementación en memoria; la implementación EMF, en infraestructura (D11) | R011 |
+| `src/backend/app/sessions/application/` (eventos del reproductor), `src/backend/app/sessions/domain/{music_session,queue}.py`, `src/backend/app/sessions/infrastructure/repositories.py`, `src/backend/migrations/versions/0005_player_claimed_at.py` | `TrackStarted`, `TrackFailed` y `TrackGap` por el puerto; `created_at` de cada canción y `player_claimed_at` de la sesión (D11) | R011 |
 | `src/backend/app/sessions/infrastructure/redis_publisher.py` | `published_at` en cada evento (D11) | R011 |
 | `src/backend/app/catalog/infrastructure/youtube.py` | Contador de unidades de la cuota (D11) | R021 |
 | `src/backend/app/worker.py`, `app/shared/outbox.py` | Registro JSON de envíos sin la dirección (D11) | R016 |
@@ -466,7 +474,8 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
 ## Modelo de datos
 
-No cambia el esquema: no hay tablas ni migraciones nuevas.
+- **Migración `0005_player_claimed_at`**, reversible: `music_session.player_claimed_at timestamptz NULL`, la hora de la última toma de control del reproductor. La escribe cada puesta en marcha (R004 y R010 de 002) y la usa `TrackGap` (D11). La tabla conserva su política RLS y sus permisos.
+- `queue_item.created_at` ya existe (`0002`): el dominio pasa a leerlo para `TrackGap`.
 
 - **Usuarios de PostgreSQL:** `myplaylist_api` y `myplaylist_worker`, creados por `app.ops.db_users`. Las migraciones usan el usuario maestro de RDS (D5).
 - **Migración `0001_accounts`:** `NOBYPASSRLS` solo se aplica a los roles que tienen `BYPASSRLS`. Su resultado no cambia (D5).
@@ -486,6 +495,7 @@ No cambia el esquema: no hay tablas ni migraciones nuevas.
   ```
 
   Solo las respuestas 401 y 403 añaden `"client_ip"`, tomado de `CloudFront-Viewer-Address` sin el puerto. Nunca hay cadena de consulta, cabeceras, cookies ni cuerpo.
+- **Línea de una métrica suelta** (las que no van dentro de un registro, como `SearchUnavailable` o las del reproductor): `{"event": "metric", "_aws": {…}, <dimensiones>, "<Nombre>": <valor>}`.
 - **Puerto `Metrics`** (`app/shared/metrics.py`):
   - `count(name: str, value: float = 1, **dimensions: str) -> None`;
   - `timing(name: str, ms: float, **dimensions: str) -> None`.
@@ -543,7 +553,23 @@ sequenceDiagram
 
 ### Modelo de datos
 
-No aplica.
+```mermaid
+erDiagram
+    music_session ||--o{ queue_item : tiene
+    music_session {
+        uuid id PK
+        uuid establishment_id
+        int player_epoch
+        timestamptz player_claimed_at "nueva (0005)"
+    }
+    queue_item {
+        uuid id PK
+        uuid session_id FK
+        timestamptz created_at "ya existía; la lee TrackGap"
+        timestamptz started_at
+        timestamptz finished_at
+    }
+```
 
 ### Clases
 
@@ -600,11 +626,11 @@ classDiagram
 | R004 | unitaria: el mando de producción de la imagen no migra; entorno: una sola migración en los registros y revisión `0004` | `src/backend/tests/unit/test_dockerfile.py`, `docs/qa/infra-despliegue.md` |
 | R005 | entorno (preproducción): una migración que falla a propósito y una versión sin comprobación de salud | `docs/qa/infra-resiliencia.md` |
 | R006 | entorno: buscar los valores de los secretos en las imágenes (`docker history`, `inspect`), en los registros y en el repositorio (gitleaks) | `docs/qa/infra-despliegue.md` |
-| R007 | unitaria: validaciones de `production` y `preproduction` en la API y en C6; entorno: despliegue con un secreto de desarrollo | `src/backend/tests/unit/test_config.py`, `src/realtime/src/server.test.ts`, `docs/qa/infra-resiliencia.md` |
+| R007 | unitaria: validaciones de `production` y `preproduction` en la API y en C6; entorno: despliegue con un secreto de desarrollo | `src/backend/tests/unit/test_config.py`, `src/realtime/test/server.test.ts`, `docs/qa/infra-resiliencia.md` |
 | R008 | entorno: correo de verificación a Gmail y a Outlook, y sus cabeceras | `docs/qa/infra-navegadores.md` |
 | R009 | plan: Multi-AZ, réplica de Redis y dos o más tareas; entorno (preproducción): parar tareas y forzar la conmutación de RDS bajo tráfico | `src/infra/tests/data.tftest.hcl`, `docs/qa/infra-resiliencia.md` |
 | R010 | plan: retención de 7 días; entorno: restaurar a un momento dado en una instancia aparte | `src/infra/tests/data.tftest.hcl`, `docs/qa/infra-resiliencia.md` |
-| R011 | unitaria: middleware, EMF, `TrackGap` y métricas de C6; plan: alarmas; entorno: el panel muestra cada cifra | `src/backend/tests/unit/test_observability.py`, `src/backend/tests/integration/test_track_metrics.py`, `src/realtime/src/metrics.test.ts`, `src/infra/tests/observability.tftest.hcl`, `docs/qa/infra-operacion.md` |
+| R011 | unitaria: middleware, EMF, `TrackGap` y métricas de C6; plan: alarmas; entorno: el panel muestra cada cifra | `src/backend/tests/unit/test_observability.py`, `src/backend/tests/integration/test_track_metrics.py`, `src/realtime/test/metrics.test.ts`, `src/infra/tests/observability.tftest.hcl`, `docs/qa/infra-operacion.md` |
 | R012 | entorno (preproducción): forzar cada alarma y recibir el correo en menos de 5 minutos, también fuera de horario | `docs/qa/infra-operacion.md` |
 | R013 | entorno (preproducción): retirar 5 minutos y ver la caída en la comprobación y en el panel | `docs/qa/infra-operacion.md` |
 | R014 | entorno (preproducción): `maintenance.yml retirar`, medir el tiempo y comprobar el QR, el panel, un pedido y el correo | `docs/qa/infra-operacion.md` |
