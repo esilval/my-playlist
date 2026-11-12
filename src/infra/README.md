@@ -35,12 +35,28 @@ El CI corre lo mismo en el trabajo `infra` de cada PR que toca `src/infra/`.
 | `redis-auth-token` | Terraform, igual que los anteriores | No: al componer el entorno (T017), ElastiCache lo leerá del secreto con un recurso efímero y lo escribirá con `auth_token_wo` | Subir a la vez `rotation["redis-auth-token"]` y `redis_auth_token_version` del módulo de datos. |
 | `youtube-api-key` | Una persona, con `aws secretsmanager put-secret-value` | No: Terraform solo crea el secreto, sin valor | Volver a ejecutar `put-secret-value` y reiniciar las tareas de la API. |
 | Usuario maestro de RDS | RDS (`manage_master_user_password`) | No | Lo rota RDS. |
-
-| `cloudfront-origin-header` | Terraform, igual que los anteriores | **Sí**, en la configuración de CloudFront y en la regla del ALB, que no tienen atributo de solo escritura | Subir su número en `rotation` y desplegar: el módulo de borde (T014) lo lee del secreto y CloudFront y el ALB lo reciben en el mismo `apply`. |
+| `cloudfront-origin-header` | Terraform, igual que los anteriores | **Sí**, en la configuración de CloudFront y en las reglas del ALB, que no tienen atributo de solo escritura | Subir su número en `rotation` y aplicar: el módulo de cómputo (las reglas del ALB) y el de borde (T014, el origen de CloudFront) lo leen del mismo secreto, y los dos lo reciben en el mismo `apply`. |
 
 **Lo que sí queda en el estado:** solo la cabecera secreta entre CloudFront y el ALB (D1). Si se filtrara, permitiría llegar al ALB sin pasar por CloudFront, pero nunca dar acceso a los datos.
 
+**Rotar la cabecera corta `/api/*` y `/socket.io/*` unos minutos:** la regla del ALB cambia en segundos, pero el origen de CloudFront tarda de 5 a 15 minutos en propagarse, y mientras tanto el ALB responde 403. Hasta que el plan prevea una rotación en dos pasos, se rota fuera de las horas de servicio.
+
+**El alfabeto de los secretos generados es un contrato:** solo letras, números y `-_` (`override_special`). El tiempo real pone el token de Redis en `REDIS_URL` sin escaparlo (ver «Cómputo»): cambiar el alfabeto rompería su conexión.
+
 **Al revisar un PR que toque `src/infra/`:** `terraform test` no ve recursos efímeros ni atributos de solo escritura. El trabajo `infra` del CI falla si encuentra en `modules/` un `resource "random_password"` (dejaría el valor en el estado) o un `secret_string =` (lo escribiría en claro).
+
+## Cómputo (D1, D3, D8)
+
+`modules/compute` crea los repositorios de ECR, el clúster de ECS con los servicios `api`, `worker` y `realtime`, la tarea de migración y el ALB.
+
+- **El ALB** solo escucha en 443, en `origin.<dominio>`, con un certificado de ACM en us-east-2 validado por DNS. Cada regla exige la cabecera `X-Origin-Verify` con el valor del secreto `cloudfront-origin-header`; lo demás recibe 403. CloudFront llega a ese nombre por HTTPS (T014).
+- **Los servicios** arrancan con al menos dos tareas repartidas en las dos zonas, con vuelta atrás automática si las nuevas no superan su comprobación de salud. Terraform no deshace el número de tareas (autoescalado y retirada, D10) ni la definición de tarea (la registra cada despliegue, D9).
+- **La tarea de migración** es la única con el usuario maestro de RDS: ejecuta `alembic upgrade head` y `python -m app.ops.db_users` (D5, D8). La lanza el flujo de despliegue; no es un servicio.
+- **Los secretos** llegan en `secrets`, por su ARN, y cada rol de ejecución solo lee los de su tarea. La clave de YouTube solo va con `CATALOG_PROVIDER=youtube`: en preproducción su secreto no tiene valor, y ECS no arrancaría una tarea que lo pidiera.
+- **`REDIS_URL` del tiempo real:** la imagen de Node no tiene `app.ops.env`, así que el mando de la tarea la compone con `REDIS_HOST`, `REDIS_PORT` y el token, que solo tiene letras, números y `-_` (D6) y va en la URL sin escapar.
+- **El primer `apply` de un entorno** crea los servicios con la etiqueta de `image_tag`, que todavía no está en ECR: sus tareas no arrancan hasta el primer despliegue (T018), que sube las imágenes y registra las definiciones.
+- **Orden:** el entorno (T017) aplica este módulo después del de secretos, para que la cabecera ya tenga su versión cuando el ALB la lea.
+- **Las definiciones de tarea las registra el despliegue:** Terraform ignora `task_definition` en los servicios, así que un cambio de su configuración o de sus secretos llega con el siguiente despliegue. La revisión que registra Terraform lleva la `image_tag` inicial: el despliegue (T018) parte siempre de la última revisión de cada familia, nunca de la de Terraform.
 
 ## Datos (D4)
 
