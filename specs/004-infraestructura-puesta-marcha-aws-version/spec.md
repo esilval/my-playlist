@@ -4,7 +4,7 @@
 | ------ | ------------ |
 | ID     | `004-infraestructura-puesta-marcha-aws-version`     |
 | Fecha  | 2026-11-04     |
-| Estado | Approved · d21dd056b1f4        |
+| Estado | Approved · 0881048aa35f        |
 | Tipo   | funcionalidad |
 | Issue  | —            |
 
@@ -199,7 +199,7 @@ Además, quedan sin comprobar varias cosas que solo se pueden medir en un entorn
 
 ### R020
 
-- **Dado** 60 peticiones con rechazo por falta de permiso desde una IP en un minuto **cuando** termina el minuto **entonces** el responsable de operación recibe un correo con esa IP.
+- **Dado** 60 peticiones con rechazo por falta de permiso desde una IP en un minuto **cuando** termina el minuto **entonces** el responsable de operación recibe un correo que avisa del posible intento, y la vista de operación muestra esa IP entre las que más rechazos tienen.
 
 ### R021
 
@@ -236,3 +236,4 @@ Ninguna.
 > spec: fecha, qué cambió, por qué y los IDs afectados.
 
 - **2026-11-09 — Se pone en marcha la versión 0.2.0, no la 0.1.0.** Al planificar se vio que el código de la etiqueta `v0.1.0` no puede cumplir esta spec: le falta lo que la propia feature añade a la aplicación, que es el registro de cada petición sin el texto buscado, las métricas y el modo de preproducción con el catálogo falso. El usuario eligió desplegar la primera versión que incluya la feature, la 0.2.0. Es una aclaración: los requisitos ya hablaban de «una versión etiquetada», y solo cambian el título, el contexto, el alcance, el supuesto y la etiqueta de ejemplo de los criterios de R001. IDs afectados: R001 (criterios).
+- **2026-11-13 — El correo de SG6 avisa; la IP está en la vista de operación.** Al implementar la observabilidad se vio que el aviso de la herramienta de alarmas lleva la cifra de rechazos, pero no la IP que los provoca. El usuario eligió que el correo avise del posible intento y que la IP se consulte en la vista de operación, en lugar de añadir una función que la ponga en el correo. Es una aclaración: el requisito ya pedía «avisar al responsable», y solo cambia su criterio de aceptación. IDs afectados: R020 (criterio).

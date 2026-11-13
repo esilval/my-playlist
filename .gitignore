@@ -33,6 +33,8 @@ src/realtime/coverage/
 
 # Infraestructura (Terraform, ADR-0016): el estado vive en S3 y nunca se versiona.
 .terraform/
+# El zip del canario, que Terraform empaqueta al planear (T016).
+src/infra/modules/observability/.build/
 *.tfstate
 *.tfstate.*
 *.tfplan

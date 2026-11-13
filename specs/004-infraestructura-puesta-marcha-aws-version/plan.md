@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-11-09         |
-| Estado | Approved · 92d53dc3454e              |
+| Estado | Approved · 0ae51de49be5              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -16,7 +16,7 @@
 
 Se construye en AWS el entorno de ADR-0019 (us-east-2, que sustituye a las decisiones anteriores de región y de correo), definido con Terraform en `src/infra/` (ADR-0016). Lo forman CloudFront delante de todo en `myplaylist.200oklabs.com`, ECS Fargate para la API, el trabajador y el tiempo real, RDS PostgreSQL Multi-AZ, ElastiCache Redis y SES.
 
-El despliegue lo hace GitHub Actions desde una etiqueta, con aprobación y OIDC (ADR-0017). La observabilidad va en CloudWatch, con alarmas por correo (ADR-0018).
+El despliegue lo hace GitHub Actions desde una etiqueta, con aprobación y OIDC (ADR-0017). La observabilidad va en CloudWatch en us-east-2, con un canario de disponibilidad y alarmas por correo (ADR-0020, que sustituye a ADR-0018).
 
 La aplicación cambia en lo justo para medir las señales y proteger los registros: un registro por petición sin la cadena de consulta, métricas EMF y un modo `preproduction`. La versión que se pone en marcha es la 0.2.0, que incluye todo esto.
 
@@ -33,7 +33,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | Principio 5: sin instalación | sí | No cambia nada para los usuarios. |
 | Principio 7: decisiones transversales como ADR | sí | La herramienta de infraestructura, el camino de despliegue y la observabilidad se proponen como ADR-0016, ADR-0017 y ADR-0018. |
 | Principio 8: el código vive bajo `src/` | sí | La infraestructura vive en `src/infra/`. Los flujos van en `.github/workflows/` y las pruebas manuales en `docs/qa/`, como hasta ahora. |
-| Dependencias nuevas justificadas | sí | Terraform (ADR-0016) y la imagen de k6 en Fargate para la prueba de carga (D13). En la aplicación no hay dependencias nuevas: el formato EMF se escribe a mano en JSON. |
+| Dependencias nuevas justificadas | sí | Terraform (ADR-0016), la imagen de k6 en Fargate para la prueba de carga (D13) y el proveedor `hashicorp/archive` de Terraform, que empaqueta el guion del canario (D12). En la aplicación no hay dependencias nuevas: el formato EMF se escribe a mano en JSON. |
 | Secretos fuera del repositorio | sí | Los secretos viven en Secrets Manager y ECS los inyecta al arrancar cada tarea (D6). OIDC evita guardar claves de AWS en GitHub (ADR-0017). gitleaks sigue en el CI. |
 | La API y el trabajador nunca usan `BYPASSRLS` ni permisos de migración | sí | Solo la tarea de migración usa el usuario maestro de RDS. La API y el trabajador se conectan con `myplaylist_api` y `myplaylist_worker`, sin privilegios (D5). |
 | `ENV=production` no arranca sin SES ni con la política en borrador | sí | Se refuerza: la API se niega a arrancar si el remitente es de `example.com` o la URL pública no es HTTPS. El modo `preproduction` exige secretos propios, pero admite el catálogo falso y Mailpit (D7). |
@@ -59,7 +59,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | ADR-0015: varios procesos | `API_WORKERS` es igual a las vCPU de la tarea (2). Las conexiones caben en `max_connections` de RDS (D3, D4). |
 | ADR-0016: Terraform | `src/infra/`, con un estado por entorno y `terraform test` en el CI. Su consecuencia sobre las contraseñas en el estado no se da: los secretos generados son efímeros y de solo escritura, y solo queda la cabecera de CloudFront (D6). |
 | ADR-0017: GitHub Actions con aprobación y OIDC | `deploy.yml`, `preproduction.yml` y `maintenance.yml` (D9, D13, D14). |
-| ADR-0018: CloudWatch | Registros JSON con EMF, comprobaciones de salud de Route 53, alarmas con SNS y Contributor Insights (D11, D12). |
+| ADR-0020 (sustituye a ADR-0018): CloudWatch en us-east-2 y un canario | Registros JSON con EMF, un canario de CloudWatch Synthetics cada minuto, alarmas del ALB, alarmas con SNS y Contributor Insights, todo en us-east-2 (D11, D12). |
 | S1: capas | Las métricas de la aplicación pasan por un puerto `Metrics` del dominio compartido, que implementa la infraestructura (D11). |
 | S5: la difusión solo escucha | C6 solo añade métricas de lo que reenvía. La API añade `published_at` a los eventos, sin cambiar su significado (D11). |
 | S6: los frontales no acceden a los almacenes | Sin cambios: la SPA sigue usando solo la API y el tiempo real, bajo el mismo origen. |
@@ -300,7 +300,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
     - solo en las respuestas 401 y 403, la IP de quien la hace, para R020. Sale de la cabecera `CloudFront-Viewer-Address`, que CloudFront siempre pone y el cliente no puede falsear, y que una política de petición al origen reenvía en `/api/*` (D1). Nunca se toma de `X-Forwarded-For`, porque CloudFront añade la IP real al final de lo que ya traiga el cliente, y el primer valor lo controla quien hace la petición.
 
     No escribe cabeceras, cookies ni cuerpos. Uvicorn arranca con `--no-access-log` (R016).
-  - **Métricas EMF** en el espacio de nombres `MyPlaylist/<entorno>`, en la misma línea de registro. Solo llevan las dimensiones `Route` o `Service`; nunca el establecimiento ni el dispositivo (ADR-0018). Las de la API:
+  - **Métricas EMF** en el espacio de nombres `MyPlaylist/<entorno>`, en la misma línea de registro. Solo llevan las dimensiones `Route` o `Service`; nunca el establecimiento ni el dispositivo (ADR-0020). Las de la API:
     - `RequestLatency` (ms, por `Route`);
     - `SearchUnavailable`, cada `503 search_unavailable`;
     - `YouTubeQuotaUsed`: el total del día de la cuota, que se reinicia a medianoche de la hora del Pacífico. Es un contador de Redis `catalog:youtube-units:{día}`, al que el adaptador de YouTube suma lo que cuesta cada llamada: 100 por `search.list` y 1 por `videos.list`. Suma toda llamada con respuesta, también una de error, con su coste completo: Google cobra al menos 1 unidad por una petición inválida, así que puede sobrecontar, del lado seguro para la alarma. Una llamada sin respuesta no suma. Se emite con `count` y el valor es el total del día, no un incremento;
@@ -331,12 +331,19 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
 - **Decisión:**
   - **Tema de avisos:** un tema de SNS `myplaylist-<entorno>-alerts`, con la suscripción por correo del responsable de operación (variable de Terraform; la confirma una vez desde su buzón). Cada alarma envía un correo al entrar en `ALARM` y otro al volver a `OK` (R012). Una alarma de CloudWatch evalúa cada minuto, así que el aviso sale en el primer minuto tras cumplirse el umbral.
-  - **Comprobaciones de salud de Route 53,** cada 30 s y desde varias regiones, contra:
+  - **Un canario de CloudWatch Synthetics** en us-east-2, cada minuto (ADR-0020). Cada ejecución recorre tres pasos contra el dominio público, a través de CloudFront:
     - `https://myplaylist.200oklabs.com/api/health`;
     - `/health` del tiempo real, que CloudFront encamina por `/socket.io/health`, una ruta que se añade a C6;
     - la página pública de un establecimiento de prueba.
 
-    La alarma de SG3 salta cuando falla durante 5 minutos. El panel de CloudWatch muestra `HealthCheckPercentageHealthy` del mes en curso (R013).
+    Es un guion de Node con la versión del entorno de Synthetics fijada, que no guarda capturas, cabeceras ni cuerpos. Sus artefactos van a un bucket de S3 que caduca a los 30 días. La alarma de SG3 salta cuando falla durante 5 minutos, y trata la falta de datos como fallo.
+    - **El tercer paso** pide `/api/public/establishments/<código>`, los datos que pinta la página pública. La ruta `/l/<código>` siempre devuelve el `index.html` de S3, así que no probaría nada del servicio.
+    - **La disponibilidad del mes** es la media de `SuccessPercent` en todo el rango que se mira (`setPeriodToTimeRange`): el panel abre con los últimos 30 días, y para el mes natural se elige ese rango (R013).
+    - **El guion se empaqueta con el proveedor `hashicorp/archive`,** el oficial de HashiCorp, que solo corre al planear. Se descartaron versionar el zip, que se apartaría del guion sin que nadie lo notara, y que el CI lo construya y lo suba a S3, que añade un paso y un objeto con versión para un archivo de 80 líneas. La ruta del zip lleva el hash del guion, así que un cambio del guion actualiza el canario.
+    - **El establecimiento de prueba** tiene que existir antes de arrancar el canario: un entorno nuevo lo crea parado (`canary_enabled = false`) hasta el primer despliegue (T017, T018).
+    - **El grupo de registros de su Lambda** lo crea Synthetics en la primera ejecución, con un nombre que lleva el identificador del canario, y nace sin caducidad. Solo guarda el nombre y el resultado de cada paso. El flujo que aplica la infraestructura le pone después los 30 días (T018). Al destruir el canario se borran su Lambda y su capa (`delete_lambda`), que no llevan la etiqueta `environment` (R022).
+  - **Por qué no Route 53:** sus comprobaciones publican las métricas solo en us-east-1, igual que CloudFront, y la organización deniega allí CloudWatch y SNS (D18). Así que ninguna alarma usa métricas de Route 53 ni de CloudFront.
+  - **Alarmas del ALB, además del canario:** un grupo de destino sin tareas sanas (`HealthyHostCount` < 1) y la tasa de 5xx. Avisan aunque el canario falle.
   - **Alarmas por señal:**
 
     | Señal | Métrica | Umbral |
@@ -346,24 +353,29 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
     | SG2 | `HTTPCode_Target_5XX_Count` / `RequestCount` del ALB | > 0,1 % en 5 minutos |
     | SG2 | CPU del servicio `api` | > 80 % en 10 minutos |
     | SG2 | `DatabaseConnections` de RDS | > 80 % de `max_connections` |
-    | SG3 | Las comprobaciones de Route 53 | en fallo durante 5 minutos |
+    | SG3 | `SuccessPercent` del canario; sin datos cuenta como fallo | < 100 % en 5 de 5 minutos |
+    | SG3 | `HealthyHostCount` de cada grupo de destino del ALB | < 1 en 2 minutos |
     | SG4 | `RequestLatency` p95, `Route=…/music` | > 1000 ms en 5 minutos |
     | SG4 | `RelayDelay` p95 | > 1000 ms en 5 minutos |
     | SG5 | `TrackFailed` / `TrackStarted` | > 2 % en una hora |
     | SG5 | `TrackGap` p99 | > 3000 ms en una hora |
-    | SG6 (R020) | Contributor Insights: 401 y 403 por IP en los registros de la API | > 50 en 1 minuto |
+    | SG6 (R020) | Contributor Insights: 401 y 403 por IP en los registros de la API. El correo avisa con la cifra; la IP está en la tabla «SG6 · rechazos por IP» del panel, porque el aviso de CloudWatch no lleva la clave del contribuyente | > 50 en 1 minuto |
     | R021 | `YouTubeQuotaUsed`, estadística `Maximum`, periodo de 1 minuto; un minuto sin datos no la dispara (`treat_missing_data = notBreaching`) | ≥ 8000 unidades |
 
+  - **El panel** muestra las tasas que comparan los umbrales de SG1, SG2 y SG5 (`100 * FILL(m1, 0) / m2`), no solo los recuentos (R011).
+  - **El identificador de RDS** de la alarma de conexiones es el nombre del entorno, el mismo que usa el módulo de datos, y `max_connections` se toma como 400 (D4) hasta confirmarlo en la preproducción.
   - **Estadísticas:** `YouTubeQuotaUsed` es un total, no una cuenta: con `Sum`, varias llamadas en un minuto sumarían totales y la alarma saltaría antes de tiempo. `Connections` es lo que tiene abierto cada tarea de C6: el panel lo suma entre las tareas (`Sum` por minuto). `RelayDelay` y `RequestLatency` usan percentiles (`p95`, `p99`).
   - **Historial:** CloudWatch guarda los datos de 1 minuto 15 días, los de 5 minutos 63 días y los de 1 hora 15 meses. Con eso, R011 se cumple con resolución de 5 minutos hasta los 63 días.
   - **Presupuesto de AWS:** AWS Budgets envía un correo al responsable cuando el gasto previsto del mes supera en un 20 % el coste estimado de este plan. Así se ve a tiempo una preproducción que no se destruyó.
   - **El umbral acumulado de SG3** (más de 1,8 h de caída en el mes) no se puede expresar como una alarma de CloudWatch, que evalúa como mucho un día. Se revisa en el panel cada semana, y así queda en el README de operación.
 - **Alternativas descartadas:**
-  - CloudWatch Synthetics cada minuto: unos US$50 al mes (ADR-0018).
+  - Las comprobaciones de salud de Route 53 de ADR-0018: sin alarmas posibles en us-east-1 (ADR-0020).
+  - Canarios cada 5 minutos: más baratos, pero R013 pide comprobar cada minuto (ADR-0020).
   - SMS: el usuario eligió correo.
 - **Consecuencias:**
-  - Las comprobaciones de Route 53 necesitan una ruta de salud de C6 que pase por CloudFront: `/socket.io/health`. C6 la atiende además de `/health`.
-  - Unas 12 alarmas por entorno.
+  - El canario necesita una ruta de salud de C6 que pase por CloudFront: `/socket.io/health`. C6 la atiende además de `/health`.
+  - El canario corre en la misma región que el servicio: si cae toda us-east-2, la alarma lo ve como falta de datos, que cuenta como fallo.
+  - Unas 14 alarmas por entorno.
 
 ### D13 — Preproducción temporal y la prueba de carga en Fargate
 
@@ -492,7 +504,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | `src/infra/modules/compute` | Clúster de ECS, ECR, ALB con su listener HTTPS, el certificado del origen (us-east-2) y su registro alias, los servicios, el autoescalado, el «circuit breaker», la tarea de migración, Mailpit y k6 en preproducción (D3, D8, D13) | R003, R004, R005, R009, R017, R022 |
 | `src/infra/modules/secrets` | Secretos generados, efímeros y de solo escritura, y su rotación (D6) | R006, R007, R022 |
 | `src/infra/modules/email` | Identidad de SES, DKIM, MAIL FROM y DMARC (D14) | R008 |
-| `src/infra/modules/observability` | Grupos de registros de 30 días, alarmas, tema de SNS, comprobaciones de Route 53, Contributor Insights y el panel (D12) | R011, R012, R013, R016, R020, R021 |
+| `src/infra/modules/observability` | Grupos de registros de 30 días, alarmas, tema de SNS, el canario de disponibilidad y su bucket, Contributor Insights y el panel (D12) | R011, R012, R013, R016, R020, R021 |
 | `src/infra/environments/{production,preproduction}` | Variables y estado de cada entorno | R022 |
 | `src/infra/tests/*.tftest.hcl` | Pruebas del plan (D15) | R003, R009, R010, R011, R016, R022 |
 | `.github/workflows/deploy.yml` | Despliegue de una etiqueta con aprobación (D9) | R001, R002, R004, R005, R007 |
@@ -678,7 +690,7 @@ classDiagram
 | R010 | plan: retención de 7 días; entorno: restaurar a un momento dado en una instancia aparte | `src/infra/tests/data.tftest.hcl`, `docs/qa/infra-resiliencia.md` |
 | R011 | unitaria: middleware, EMF, `TrackGap` y métricas de C6; plan: alarmas; entorno: el panel muestra cada cifra | `src/backend/tests/unit/test_observability.py`, `src/backend/tests/integration/test_track_metrics.py`, `src/realtime/test/metrics.test.ts`, `src/infra/tests/observability.tftest.hcl`, `docs/qa/infra-operacion.md` |
 | R012 | entorno (preproducción): forzar cada alarma y recibir el correo en menos de 5 minutos, también fuera de horario | `docs/qa/infra-operacion.md` |
-| R013 | entorno (preproducción): retirar 5 minutos y ver la caída en la comprobación y en el panel | `docs/qa/infra-operacion.md` |
+| R013 | plan: el canario cada minuto con sus tres pasos, la alarma de SG3 y que ninguna alarma usa métricas de us-east-1; unitaria: el guion del canario; entorno (preproducción): retirar 5 minutos y ver la caída en el canario y en el panel | `src/infra/tests/observability.tftest.hcl`, `src/infra/modules/observability/canary/canary.test.js`, `docs/qa/infra-operacion.md` |
 | R014 | entorno (preproducción): `maintenance.yml retirar`, medir el tiempo y comprobar el QR, el panel, un pedido y el correo | `docs/qa/infra-operacion.md` |
 | R015 | entorno (preproducción): `maintenance.yml volver` y entrar con la misma cuenta | `docs/qa/infra-operacion.md` |
 | R016 | unitaria: el middleware no escribe la cadena de consulta, cookies ni cabeceras, y el trabajador no escribe direcciones; plan: retención de 30 días y sin registros de acceso del ALB ni de CloudFront; entorno: buscar en los registros | `src/backend/tests/unit/test_observability.py`, `src/backend/tests/unit/test_worker_logs.py`, `src/infra/tests/observability.tftest.hcl`, `docs/qa/infra-operacion.md` |
@@ -691,7 +703,7 @@ classDiagram
 
 ## Coste estimado
 
-Son el orden de magnitud con el que se aprobó el plan: precios de lista bajo demanda en us-east-1, que coinciden o casi con los de us-east-2 (ADR-0019). T009 los comprobó con la API de precios de AWS (`aws pricing get-products`) en us-east-2, y el total comprobado, unos US$435 a 440 al mes, queda dentro del 20 % de esta tabla. Las cifras comprobadas están en `src/infra/README.md`, «Coste».
+Son el orden de magnitud con el que se aprobó el plan: precios de lista bajo demanda en us-east-1, que coinciden o casi con los de us-east-2 (ADR-0019). T009 los comprobó con la API de precios de AWS (`aws pricing get-products`) en us-east-2, y el total comprobado, unos US$435 a 440 al mes, queda dentro del 20 % de esta tabla. El canario de ADR-0020 (US$0,0012 por ejecución, unas 43 800 al mes) añade unos US$53, y las comprobaciones de Route 53 que sustituye restan unos US$2. Las cifras comprobadas están en `src/infra/README.md`, «Coste».
 
 | Recurso | Producción, en reposo (US$/mes) |
 | ------- | ------------------------------- |
@@ -702,9 +714,10 @@ Son el orden de magnitud con el que se aprobó el plan: precios de lista bajo de
 | ElastiCache 2 × `cache.t4g.small` | ~47 |
 | ALB | ~25 |
 | IP públicas (6 tareas y el ALB en dos zonas) | ~30 |
-| CloudWatch (registros, unas 40 métricas, 12 alarmas, Contributor Insights) | ~30 a 45 |
-| CloudFront, Route 53 (zona y 3 comprobaciones), Secrets Manager, ECR, SES, S3 | ~15 |
-| **Total** | **~450 a 460** |
+| CloudWatch (registros, unas 40 métricas, 14 alarmas, Contributor Insights) | ~30 a 45 |
+| El canario de disponibilidad, cada minuto (ADR-0020) | ~53 |
+| CloudFront, Route 53 (la zona), Secrets Manager, ECR, SES, S3 | ~13 |
+| **Total** | **~500 a 515** |
 
 - **Hora pico:** el autoescalado hasta 6 tareas de la API añade unos US$0,20 por tarea y hora.
 - **Preproducción:** unos US$0,70 por hora con todo en marcha, más la tarea de k6. Una prueba completa, de unas 3 horas entre crear, desplegar, probar y destruir, cuesta unos US$3.

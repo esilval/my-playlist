@@ -736,3 +736,22 @@ run "F004_R022_produccion_no_tiene_mailpit_ni_k6" {
     error_message = "En producción, el correo sale por SES y no hay SMTP (D14)."
   }
 }
+
+# T016 (R016): la parte del ALB. La de CloudFront está en edge.tftest.hcl, con el mismo nombre.
+run "F004_R016_sin_registros_de_acceso_del_alb_ni_de_cloudfront" {
+  command = apply
+
+  module {
+    source = "./modules/compute"
+  }
+
+  assert {
+    condition     = length(aws_lb.this.access_logs) == 0 || !anytrue([for logs in aws_lb.this.access_logs : logs.enabled])
+    error_message = "El ALB no guarda registros de acceso: llevarían la cadena de consulta con el texto buscado (R016)."
+  }
+
+  assert {
+    condition     = length(aws_lb.this.connection_logs) == 0 || !anytrue([for logs in aws_lb.this.connection_logs : logs.enabled])
+    error_message = "Ni registros de conexión, que llevan la IP de todas las peticiones (R016)."
+  }
+}

@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-11-09  |
-| Estado | Approved · 0f30f50af915       |
+| Estado | Approved · 3f3097d8796d       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -331,24 +331,33 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
   **El usuario** pide la salida del sandbox de SES en us-east-2 (D14, ADR-0019), y la solicitud queda anotada en `src/infra/README.md` con su fecha. Hoy la deniega la organización (D18): hasta que el caso de soporte lo resuelva, la tarea queda en `[~]`.
 
-### T016 — Observabilidad: registros, alarmas, comprobaciones y presupuesto
+### T016 — Observabilidad: registros, alarmas, el canario y el presupuesto
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R008, R011, R012, R013, R016, R020, R021
 - **Depende de:** T013, T014
 - **Archivos:**
   - `src/infra/modules/observability/*.tf`
+  - `src/infra/modules/observability/canary/*.js`: el guion del canario y su prueba
   - `src/infra/tests/observability.tftest.hcl`
+  - `.github/workflows/ci.yml`: `node --test` del guion del canario
+  - `src/infra/README.md` (la sección «Observabilidad»)
+  - `src/infra/modules/compute/outputs.tf`: los grupos de destino, para las alarmas de tareas sanas
+  - `src/infra/tests/compute.tftest.hcl` y `src/infra/tests/edge.tftest.hcl`: la parte del ALB y la de CloudFront de `F004_R016_sin_registros_de_acceso_del_alb_ni_de_cloudfront`
+  - `src/infra/.terraform.lock.hcl` (el proveedor `hashicorp/archive`) y `.gitignore` (el zip del canario)
 - **Hecho cuando:** pasan:
   - `run "F004_R011_hay_una_alarma_por_umbral_de_sg1_a_sg6"`;
   - `run "F004_R012_cada_alarma_avisa_al_tema_con_la_suscripcion_por_correo"`;
-  - `run "F004_R013_comprobaciones_de_route_53_cada_30_s"`;
+  - `run "F004_R013_el_canario_comprueba_cada_minuto_las_tres_rutas_en_us_east_2"`: un canario de Synthetics con `rate(1 minute)`, su versión del entorno fijada, los tres pasos (`/api/health`, `/socket.io/health` y la página de un establecimiento de prueba), sin capturas, y sus artefactos en un bucket que caduca a los 30 días (ADR-0020);
+  - `run "F004_R013_sg3_salta_si_el_canario_falla_o_no_hay_datos"`: la alarma de `SuccessPercent` con `treat_missing_data = breaching`, y las de `HealthyHostCount` de los dos grupos de destino del ALB;
+  - `run "F004_R013_ninguna_alarma_usa_metricas_de_us_east_1"`: ninguna alarma usa los espacios de nombres `AWS/Route53` ni `AWS/CloudFront` (D18);
+  - la función del canario se prueba con `node --test`, como la del borde, y el trabajo `infra` del CI la ejecuta;
   - `run "F004_R016_todos_los_grupos_de_registros_guardan_30_dias"`: también los de `mailpit` y `k6`, que solo existen en preproducción (T029);
   - `run "F004_R016_sin_registros_de_acceso_del_alb_ni_de_cloudfront"`;
   - `run "F004_R020_contributor_insights_cuenta_401_y_403_por_ip"`;
   - `run "F004_R008_el_tema_de_avisos_admite_a_ses"`: la política del tema permite `sns:Publish` a `ses.amazonaws.com`, con la identidad del correo como origen (D14);
   - `run "F004_R021_alarma_de_cuota_de_youtube_en_8000"`, con la estadística `Maximum`, un periodo de 1 minuto y `treat_missing_data = notBreaching`;
-  - `run "F004_R011_el_panel_muestra_sg1_a_sg6_y_la_disponibilidad_del_mes"`;
+  - `run "F004_R011_el_panel_muestra_sg1_a_sg6_y_la_disponibilidad_del_mes"`: con las tasas de SG1, SG2 y SG5, la disponibilidad en todo el rango del panel, y la tabla de SG6 con las IP, a la que remite su aviso (R020);
   - `run "presupuesto_con_aviso_por_correo"` (D12, sin requisito propio).
 
 ### T017 — Entornos `production` y `preproduction`
@@ -376,7 +385,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
   El módulo de observabilidad pasa al de cómputo sus `log_groups`, con las claves `api`, `worker`, `realtime` y `migrate`, y en preproducción también `mailpit` y `k6`, sin `depends_on` entre los dos: los grupos no dependen del cómputo, pero las alarmas sí. El entorno pasa los `mailpit_ports` del cómputo al módulo de red.
 
-  La rotación del token de Redis (subir a la vez `rotation["redis-auth-token"]` y `redis_auth_token_version`) queda en `src/infra/README.md`.
+  La rotación del token de Redis (subir a la vez `rotation["redis-auth-token"]` y `redis_auth_token_version`) queda en `src/infra/README.md`. Cada entorno nuevo crea el canario parado (`canary_enabled = false`) hasta que exista su establecimiento de prueba (T016).
 
 ### T018 — Flujos de despliegue e infraestructura, y primer despliegue en preproducción
 
@@ -390,6 +399,10 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `docs/qa/infra-despliegue.md`
 - **Hecho cuando:**
   - actionlint pasa en el CI.
+  - Tras el primer `apply` de un entorno, `infra.yml` pone 30 días de retención al grupo de registros de la Lambda del canario (`/aws/lambda/cwsyn-…`), que Synthetics crea sin caducidad (D12).
+  - El primer despliegue de un entorno crea su establecimiento de prueba, con el código de `canary_establishment_code`, y después arranca el canario (`canary_enabled = true`).
+  - `infra.yml` hace el `plan` y el `apply` en el mismo trabajo, porque el `plan` escribe el zip del canario en `modules/observability/.build/` (T016).
+  - Al destruir la preproducción, el flujo borra también el grupo de registros `/aws/lambda/cwsyn-…` de su canario, que Synthetics no borra con la Lambda y no lleva la etiqueta `environment` (R022).
   - `deploy.yml` registra cada definición de tarea nueva a partir de la última revisión de su familia, cambiando solo la imagen; nunca a partir de la que registró Terraform, que lleva la etiqueta inicial (T013).
   - **El usuario** crea los entornos de GitHub con revisor y la regla de etiquetas `v*` (D17).
   - Tras etiquetar `v0.2.0-rc.1`, quedan con resultado en `docs/qa/infra-despliegue.md`, todos contra la preproducción:
