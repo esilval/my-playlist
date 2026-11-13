@@ -67,6 +67,15 @@ El CI corre lo mismo en el trabajo `infra` de cada PR que toca `src/infra/`.
 - **La función `edge`** (`functions/edge.js`) corre en viewer-request en los tres comportamientos. Con la clave `maintenance` en `on` responde 503 a todo; si no, reescribe a `/index.html` las rutas de la SPA sin extensión. Si el almacén no responde, atiende. Se prueba con `node --test functions/edge.test.js`, que también corre en el CI.
 - **La clave `maintenance`** nace en `off`, y la cambia `maintenance.yml` (T020). Terraform no deshace su valor.
 
+## Preproducción: Mailpit y k6 (D13)
+
+Solo con `production = false`, el módulo de cómputo añade:
+- **Mailpit** (`axllent/mailpit:v1.31.6`, la versión del compose), un servicio de una tarea, sin ALB. Se registra en una zona DNS privada de la VPC (Cloud Map): `mailpit.myplaylist-preproduction.internal`. La API y el trabajador le envían el correo por SMTP (1025), y k6 lee los mensajes por su API (8025).
+- **La definición de tarea de k6** (`grafana/k6:1.4.0`, 4 vCPU y 8 GiB), que no es un servicio: la lanza `preproduction.yml` con `run-task` (T019). Va contra `https://pre.myplaylist.200oklabs.com`, como un cliente real, con 50 establecimientos. La imagen no trae el guion: se lo da T019.
+- **Los puertos de Mailpit,** abiertos entre las tareas del mismo grupo: el cómputo los da en `mailpit_ports` y el entorno se los pasa al módulo de red (T017). Producción no abre ninguno.
+
+Se usa DNS privado y no Service Connect porque Service Connect solo funciona entre servicios, y k6 es una tarea suelta.
+
 ## Correo (D14)
 
 `modules/email` crea, solo en producción, la identidad de SES de `myplaylist.200oklabs.com` en us-east-2. La preproducción envía a Mailpit (D13).
@@ -88,7 +97,7 @@ El CI corre lo mismo en el trabajo `infra` de cada PR que toca `src/infra/`.
 ## Red (D2)
 
 `modules/network` crea una VPC en dos zonas, sin NAT. Las pruebas (`tests/network.tftest.hcl`) comprueban los recursos que nombran, pero no ven uno nuevo. Por eso, al revisar un PR que toque `modules/network/`, hay que comprobar que:
-- no aparece ningún `aws_vpc_security_group_ingress_rule` ni `aws_vpc_security_group_egress_rule` fuera de los que ya hay;
+- no aparece ningún `aws_vpc_security_group_ingress_rule` ni `aws_vpc_security_group_egress_rule` fuera de los que ya hay (`tasks_mailpit` solo existe en preproducción, con los puertos de Mailpit);
 - no aparece ninguna `aws_route` sobre la tabla privada;
 - no aparece ningún `aws_nat_gateway`.
 

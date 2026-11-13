@@ -127,3 +127,42 @@ run "F004_R009_las_tareas_solo_admiten_entradas_desde_el_alb" {
     error_message = "La lista es la de los orígenes de CloudFront."
   }
 }
+
+# T029 (D13): el puerto de Mailpit solo se abre en preproducción, y solo entre las tareas.
+run "F004_R022_el_puerto_smtp_solo_se_abre_entre_las_tareas_en_preproduccion" {
+  command = apply
+
+  module {
+    source = "./modules/network"
+  }
+
+  variables {
+    mailpit_ports = { smtp = 1025, http = 8025 }
+  }
+
+  assert {
+    condition = (
+      toset([for rule in aws_vpc_security_group_ingress_rule.tasks_mailpit : rule.from_port]) == toset([1025, 8025]) &&
+      alltrue([
+        for rule in aws_vpc_security_group_ingress_rule.tasks_mailpit :
+        rule.security_group_id == aws_security_group.tasks.id &&
+        rule.referenced_security_group_id == aws_security_group.tasks.id &&
+        rule.cidr_ipv4 == null && rule.from_port == rule.to_port
+      ])
+    )
+    error_message = "Los puertos de Mailpit solo admiten a las propias tareas (D13)."
+  }
+}
+
+run "F004_R022_produccion_no_abre_el_puerto_smtp" {
+  command = apply
+
+  module {
+    source = "./modules/network"
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.tasks_mailpit) == 0
+    error_message = "Producción no tiene Mailpit, así que no abre sus puertos (D13)."
+  }
+}

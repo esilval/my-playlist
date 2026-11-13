@@ -30,3 +30,13 @@ output "alb_arn_suffix" {
   description = "Para las métricas y alarmas del ALB (D12)."
   value       = aws_lb.this.arn_suffix
 }
+
+output "load_test_task_definition" {
+  description = "Solo en preproducción: la familia de la tarea de k6, que lanza preproduction.yml (D13, T019)."
+  value       = local.preproduction ? aws_ecs_task_definition.tools["k6"].family : null
+}
+
+output "mailpit_ports" {
+  description = "Los puertos que el módulo de red abre entre las tareas en preproducción (D13)."
+  value       = local.preproduction ? local.mailpit_ports : {}
+}

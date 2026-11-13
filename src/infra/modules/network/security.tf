@@ -52,6 +52,19 @@ resource "aws_vpc_security_group_ingress_rule" "tasks_from_alb" {
   to_port                      = each.value
 }
 
+# Solo en preproducción: la API y el trabajador envían a Mailpit, y k6 lee sus correos, todo
+# entre tareas del mismo grupo (D13).
+resource "aws_vpc_security_group_ingress_rule" "tasks_mailpit" {
+  for_each = var.mailpit_ports
+
+  security_group_id            = aws_security_group.tasks.id
+  description                  = "Mailpit (${each.key}) entre las tareas"
+  referenced_security_group_id = aws_security_group.tasks.id
+  ip_protocol                  = "tcp"
+  from_port                    = each.value
+  to_port                      = each.value
+}
+
 resource "aws_vpc_security_group_egress_rule" "tasks_out" {
   security_group_id = aws_security_group.tasks.id
   description       = "YouTube, SES, Secrets Manager, ECR, CloudWatch y los datos"
