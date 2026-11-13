@@ -19,6 +19,11 @@ variable "domain" {
   type        = string
 }
 
+variable "public_validation_fqdn" {
+  description = "El registro de validación del dominio público, que crea el módulo de borde: también valida el certificado del ALB (D1)."
+  type        = string
+}
+
 variable "zone_id" {
   description = "La zona de Route 53 de `200oklabs.com`, del arranque (D17)."
   type        = string

@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-11-09  |
-| Estado | Approved · 82b62f610fc9       |
+| Estado | Approved · 6a67c0db0b72       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -284,14 +284,17 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T014 — Borde: CloudFront, certificado, la SPA y el mantenimiento
 
-- **Estado:** `[ ]`
-- **Requisitos:** R003, R014, R020
+- **Estado:** `[x]`
+- **Requisitos:** R003, R014, R020, R022
 - **Depende de:** T013
 - **Archivos:**
   - `src/infra/modules/edge/*.tf`
   - `src/infra/modules/edge/functions/edge.js`
   - `src/infra/modules/edge/functions/edge.test.js`
   - `src/infra/tests/edge.tftest.hcl`
+  - `src/infra/modules/compute/{alb,variables}.tf` y `src/infra/tests/compute.tftest.hcl`: el certificado del ALB cubre también el dominio público (D1)
+  - `.github/workflows/ci.yml`: `node --test` en el trabajo `infra`
+  - `src/infra/README.md` (la sección «Borde»)
 - **Hecho cuando:**
   - Pasan con `node --test`, que el trabajo `infra` del CI también ejecuta:
     - `F004_R014 con maintenance=on devuelve 503 y la página de mantenimiento`;
@@ -306,7 +309,9 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
     - `run "F004_R009_cloudfront_pone_la_cabecera_que_exige_el_alb"`: el valor sale del secreto `cloudfront-origin-header`, leído por el módulo, y es el mismo en el origen de CloudFront y en la regla del ALB (D6);
     - `run "F004_R014_la_funcion_edge_esta_en_viewer_request_en_los_tres_comportamientos"`;
     - `run "F004_R003_la_distribucion_no_tiene_respuestas_de_error_personalizadas"`, para que los 404 y 403 de la API lleguen tal cual (R013 de 001);
-    - `run "F004_R020_api_reenvia_cloudfront_viewer_address_al_origen"`.
+    - `run "F004_R020_api_reenvia_cloudfront_viewer_address_al_origen"`;
+    - `run "F004_R022_la_preproduccion_borra_el_bucket_de_la_spa"`.
+  - En `compute.tftest.hcl`, `F004_R003_el_alb_solo_escucha_https_con_el_certificado_del_origen` comprueba además que el certificado del ALB cubre el dominio público y que su validación espera el registro del borde (`public_validation_fqdn`), sin crear otro.
 
 ### T015 — Correo: SES en el dominio `P`
 
@@ -360,6 +365,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `run "F004_R022_todos_los_recursos_llevan_la_etiqueta_environment"`;
   - `run "F004_R006_redis_recibe_el_token_de_su_secreto_por_solo_escritura"`: el módulo raíz lee el secreto `redis-auth-token` con un recurso efímero y lo pasa a `auth_token_wo` del módulo de datos (D6).
 
+  - `run "F004_R003_el_computo_recibe_el_registro_de_validacion_del_borde"`: `public_validation_fqdn` del cómputo es la salida del borde (D1);
   - `run "F004_R006_computo_y_borde_se_aplican_despues_de_los_secretos"`: los módulos de cómputo y de borde tienen `depends_on = [module.secrets]`, para que lean la cabecera de CloudFront cuando ya tiene versión (D6).
 
   El módulo de observabilidad pasa al de cómputo sus `log_groups`, con las claves `api`, `worker`, `realtime` y `migrate`, sin `depends_on` entre los dos: los grupos no dependen del cómputo, pero las alarmas sí.
@@ -580,6 +586,6 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 | R019 | T024 |
 | R020 | T003, T014, T016, T022 |
 | R021 | T005, T016, T022 |
-| R022 | T001, T011, T012, T017, T019, T029 |
+| R022 | T001, T011, T012, T014, T017, T019, T029 |
 
 > Todo requisito MUST debe tener al menos una tarea.
