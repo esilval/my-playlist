@@ -14,12 +14,20 @@ mock_provider "aws" {
   mock_resource "aws_acm_certificate" {
     defaults = {
       arn = "arn:aws:acm:us-east-2:955519187424:certificate/origen"
-      domain_validation_options = [{
-        domain_name           = "origin.myplaylist.200oklabs.com"
-        resource_record_name  = "_abc.origin.myplaylist.200oklabs.com."
-        resource_record_type  = "CNAME"
-        resource_record_value = "_def.acm-validations.aws."
-      }]
+      domain_validation_options = [
+        {
+          domain_name           = "origin.myplaylist.200oklabs.com"
+          resource_record_name  = "_abc.origin.myplaylist.200oklabs.com."
+          resource_record_type  = "CNAME"
+          resource_record_value = "_def.acm-validations.aws."
+        },
+        {
+          domain_name           = "myplaylist.200oklabs.com"
+          resource_record_name  = "_ghi.myplaylist.200oklabs.com."
+          resource_record_type  = "CNAME"
+          resource_record_value = "_jkl.acm-validations.aws."
+        },
+      ]
     }
   }
   mock_resource "aws_acm_certificate_validation" {
@@ -66,6 +74,7 @@ variables {
   public_subnet_ids       = ["subnet-publica-a", "subnet-publica-b"]
   alb_security_group_id   = "sg-alb"
   tasks_security_group_id = "sg-tareas"
+  public_validation_fqdn  = "_ghi.myplaylist.200oklabs.com"
   master_user_secret_arn  = "arn:aws:secretsmanager:us-east-2:955519187424:secret:rds!db-prueba"
   image_tag               = "v0.2.0-rc.1"
   database                = { host = "db.prueba", port = 5432, name = "myplaylist" }
@@ -382,13 +391,24 @@ run "F004_R003_el_alb_solo_escucha_https_con_el_certificado_del_origen" {
     error_message = "El listener usa el certificado de origin.<dominio>, validado por DNS (D1)."
   }
 
+  # CloudFront reenvía Host y comprueba el certificado del origen contra el dominio público.
+  assert {
+    condition     = aws_acm_certificate.origin.subject_alternative_names == toset(["myplaylist.200oklabs.com"])
+    error_message = "El certificado del ALB cubre también el dominio público, que llega en Host (D1, D11)."
+  }
+
   assert {
     condition = (
       aws_route53_record.origin_validation.zone_id == "Z0639081273LJQWTITRKS" &&
-      aws_route53_record.origin_validation.name == "_abc.origin.myplaylist.200oklabs.com." &&
-      aws_acm_certificate_validation.origin.validation_record_fqdns == toset([aws_route53_record.origin_validation.fqdn])
+      aws_route53_record.origin_validation.name == "_abc.origin.myplaylist.200oklabs.com."
     )
-    error_message = "El registro de validación está en la zona del dominio y la validación lo espera (D1)."
+    error_message = "El registro de validación de origin.<dominio> está en la zona del dominio (D1)."
+  }
+
+  # El del dominio público lo crea el borde; aquí solo se espera (un solo dueño del registro).
+  assert {
+    condition     = aws_acm_certificate_validation.origin.validation_record_fqdns == toset([aws_route53_record.origin_validation.fqdn, "_ghi.myplaylist.200oklabs.com"])
+    error_message = "La validación espera el registro de origin.<dominio> y el del dominio público, que es del borde (D1)."
   }
 
   assert {
@@ -461,6 +481,8 @@ run "F004_R001_ecr_tiene_etiquetas_inmutables" {
 
 run "F004_R022_la_preproduccion_usa_el_catalogo_falso_y_borra_sus_imagenes" {
   command = apply
+  # Un estado propio: la preproducción es otro entorno, no un cambio del de producción.
+  state_key = "preproduction"
 
   module {
     source = "./modules/compute"
@@ -475,6 +497,21 @@ run "F004_R022_la_preproduccion_usa_el_catalogo_falso_y_borra_sus_imagenes" {
       EMAIL_BACKEND    = "smtp"
       PUBLIC_BASE_URL  = "https://pre.myplaylist.200oklabs.com"
       CATALOG_PROVIDER = "fake"
+    }
+  }
+
+  override_resource {
+    target = aws_acm_certificate.origin
+    values = {
+      arn = "arn:aws:acm:us-east-2:955519187424:certificate/origen-pre"
+      domain_validation_options = [
+        for domain in ["origin.pre.myplaylist.200oklabs.com", "pre.myplaylist.200oklabs.com"] : {
+          domain_name           = domain
+          resource_record_name  = "_abc.${domain}."
+          resource_record_type  = "CNAME"
+          resource_record_value = "_def.acm-validations.aws."
+        }
+      ]
     }
   }
 

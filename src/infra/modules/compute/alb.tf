@@ -1,6 +1,9 @@
 # El ALB (D1): público, pero su grupo solo admite a CloudFront, y solo en 443. Atiende
 # `origin.<dominio>` con un certificado propio en us-east-2, y cada regla exige además la
 # cabecera secreta que pone CloudFront. Sin ella, 403.
+#
+# El certificado cubre también el dominio público: CloudFront reenvía la cabecera Host del
+# visitante (D11), y entonces comprueba el certificado del origen contra ese nombre.
 locals {
   origin_domain = "origin.${var.domain}"
   # El nombre de la cabecera no es secreto; su valor sí. El módulo de borde pone el mismo.
@@ -8,17 +11,24 @@ locals {
 }
 
 resource "aws_acm_certificate" "origin" {
-  domain_name       = local.origin_domain
-  validation_method = "DNS"
+  domain_name               = local.origin_domain
+  subject_alternative_names = [var.domain]
+  validation_method         = "DNS"
 
   lifecycle {
     create_before_destroy = true
   }
 }
 
-# Un certificado de un solo nombre tiene una sola opción de validación.
+# Este módulo solo crea el registro de validación de `origin.<dominio>`. El del dominio
+# público es del módulo de borde, que lo crea para el certificado de CloudFront: ACM usa el
+# mismo CNAME para un nombre en cualquier región de la cuenta, así que valida los dos
+# certificados. Un solo dueño, para que destruir uno no deje sin renovación al otro.
 locals {
-  origin_validation = one(aws_acm_certificate.origin.domain_validation_options)
+  origin_validation = one([
+    for option in aws_acm_certificate.origin.domain_validation_options : option
+    if option.domain_name == local.origin_domain
+  ])
 }
 
 resource "aws_route53_record" "origin_validation" {
@@ -32,7 +42,7 @@ resource "aws_route53_record" "origin_validation" {
 
 resource "aws_acm_certificate_validation" "origin" {
   certificate_arn         = aws_acm_certificate.origin.arn
-  validation_record_fqdns = [aws_route53_record.origin_validation.fqdn]
+  validation_record_fqdns = [aws_route53_record.origin_validation.fqdn, var.public_validation_fqdn]
 }
 
 resource "aws_lb" "this" {

@@ -58,6 +58,15 @@ El CI corre lo mismo en el trabajo `infra` de cada PR que toca `src/infra/`.
 - **Orden:** el entorno (T017) aplica este módulo después del de secretos, para que la cabecera ya tenga su versión cuando el ALB la lea.
 - **Las definiciones de tarea las registra el despliegue:** Terraform ignora `task_definition` en los servicios, así que un cambio de su configuración o de sus secretos llega con el siguiente despliegue. La revisión que registra Terraform lleva la `image_tag` inicial: el despliegue (T018) parte siempre de la última revisión de cada familia, nunca de la de Terraform.
 
+## Borde (D1, D10)
+
+`modules/edge` crea la distribución de CloudFront del dominio público, con su certificado en us-east-1, el bucket privado de la SPA y la función `edge` con su almacén de claves.
+
+- **Rutas:** `/api/*` y `/socket.io/*` van al ALB por HTTPS (`origin.<dominio>`), sin caché y con todo lo del visitante, más `CloudFront-Viewer-Address`; lo demás, al bucket, con Origin Access Control. No hay respuestas de error personalizadas ni registros de acceso.
+- **La cabecera Host llega al ALB tal cual,** con el dominio público. CloudFront comprueba entonces el certificado del origen contra ese nombre, y por eso el del ALB cubre `origin.<dominio>` y también `<dominio>` (módulo de cómputo). Los dos certificados validan el dominio público con el mismo registro CNAME, porque ACM usa el mismo para un nombre en cualquier región de la cuenta. Ese registro solo lo crea el borde, y el cómputo recibe su nombre (`public_validation_fqdn`) para esperarlo: así, destruir uno de los dos módulos no deja al otro certificado sin renovación. En el primer `apply` real se comprueba que el certificado del ALB queda emitido (`ISSUED`); si ACM pidiera otro CNAME, la validación se quedaría esperando.
+- **La función `edge`** (`functions/edge.js`) corre en viewer-request en los tres comportamientos. Con la clave `maintenance` en `on` responde 503 a todo; si no, reescribe a `/index.html` las rutas de la SPA sin extensión. Si el almacén no responde, atiende. Se prueba con `node --test functions/edge.test.js`, que también corre en el CI.
+- **La clave `maintenance`** nace en `off`, y la cambia `maintenance.yml` (T020). Terraform no deshace su valor.
+
 ## Datos (D4)
 
 - **PostgreSQL:** RDS Multi-AZ con copias de 7 días. En producción tiene protección contra borrado, y al destruirse deja la instantánea `myplaylist-production-final`. Si producción se destruyera otra vez, antes hay que borrar o renombrar esa instantánea.

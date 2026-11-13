@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-11-09         |
-| Estado | Approved · 56ecaf99062b              |
+| Estado | Approved · 928c295b205c              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -85,16 +85,18 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
   - **HTTPS:** el comportamiento por defecto es `redirect-to-https`, con TLS 1.2 como mínimo (R003).
   - **Acceso al ALB:** es público, pero su grupo de seguridad solo admite la lista de prefijos gestionada de CloudFront, en el puerto 443. Además, el listener exige una cabecera secreta que solo pone CloudFront; sin ella, responde 403.
   - **De CloudFront al ALB, también HTTPS:** el ALB solo escucha en 443, con un certificado de ACM en us-east-2 para un nombre de origen propio, `origin.myplaylist.200oklabs.com`, validado por DNS en la zona y con un registro alias al ALB. CloudFront apunta a ese nombre con `https-only` y TLS 1.2. Así la cabecera secreta, las cookies y los datos no viajan en claro entre CloudFront y el ALB.
+  - **El certificado del ALB cubre también el dominio público:** la política de petición al origen reenvía todas las cabeceras del visitante, Host incluida, más `CloudFront-Viewer-Address` (D11). Con Host reenviado, CloudFront comprueba el certificado del origen contra ese nombre, el dominio público. El registro de validación de ese nombre es uno solo, del módulo de borde: ACM usa el mismo CNAME en las dos regiones, y el cómputo lo espera sin crear otro.
   - **Preproducción:** `pre.myplaylist.200oklabs.com` y `origin.pre.myplaylist.200oklabs.com`, con la misma definición.
 - **Alternativas descartadas:**
   - Respuestas de error personalizadas (404 → `index.html`): son lo habitual para una SPA en S3, pero afectan también a las respuestas de la API.
   - HTTP entre CloudFront y el ALB: ahorra el certificado del origen, pero la cabecera secreta y las cookies de sesión cruzarían internet en claro.
   - HTTPS contra el nombre `*.elb.amazonaws.com` del ALB: CloudFront exige que el certificado del origen coincida con su nombre, y en ese dominio no se puede emitir uno propio.
+  - No reenviar Host, con una lista cerrada de cabeceras: el certificado del ALB solo necesitaría `origin.<dominio>`, pero cada cabecera nueva de la aplicación habría que añadirla a mano, y si se olvida, falla sin avisar.
   - `api.myplaylist…` en un subdominio aparte: rompería el mismo origen, obligaría a CORS con credenciales y a cambiar la cookie y la comprobación de `Origin`.
   - Servir la SPA desde la API: mezcla estáticos y API en las mismas tareas y pierde la caché de CloudFront.
 - **Consecuencias:**
   - Todo pasa por CloudFront, incluido el WebSocket.
-  - Hay dos certificados por entorno: el del dominio público en us-east-1, para CloudFront, y el del origen en us-east-2, para el ALB. Los dos son gratuitos y ACM los renueva solo.
+  - Hay dos certificados por entorno: el del dominio público en us-east-1, para CloudFront, y el del origen en us-east-2, para el ALB, que cubre `origin.<dominio>` y `<dominio>`. Los dos son gratuitos y ACM los renueva solo.
   - CloudFront corta una conexión WebSocket inactiva a los 10 minutos. Socket.IO envía un latido cada 25 s, así que no llega a pasar.
   - Cambiar la dirección obliga a reimprimir los QR.
 
