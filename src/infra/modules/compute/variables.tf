@@ -24,6 +24,12 @@ variable "public_validation_fqdn" {
   type        = string
 }
 
+variable "email_identity_arn" {
+  description = "La identidad de SES del módulo de correo: la única desde la que envía el trabajador (D14). Sin ella, como en preproducción, que envía a Mailpit, nadie puede usar SES."
+  type        = string
+  default     = null
+}
+
 variable "zone_id" {
   description = "La zona de Route 53 de `200oklabs.com`, del arranque (D17)."
   type        = string

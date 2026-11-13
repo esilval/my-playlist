@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-11-09         |
-| Estado | Approved · 928c295b205c              |
+| Estado | Approved · 1702d7268b22              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -404,7 +404,10 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
   - **Remitente:** `no-responder@myplaylist.200oklabs.com`.
   - **Región:** us-east-2 (ADR-0019). La configuración de la aplicación (`aws_region` en `app/shared/config.py`) pasa a tener us-east-2 por defecto, en lugar de us-east-1, y las definiciones de tarea fijan además `AWS_REGION=us-east-2` (D6). Las dos cosas: el valor por defecto evita que un olvido envíe a una región donde la identidad no existe, y la variable explícita deja la región a la vista en la definición de tarea.
   - **Avisos de SES:** los rebotes y las quejas van al mismo tema de avisos (D12).
-  - **Salida del sandbox:** se pide una vez a AWS, de forma manual. Es un requisito previo de la puesta en marcha (R008).
+  - **Salida del sandbox:** se pide una vez a AWS, de forma manual. Es un requisito previo de la puesta en marcha (R008). Hoy la bloquea la organización (D18).
+  - **Permiso de envío:** solo el trabajador, y solo como el dominio (`ses:FromAddress`). El recurso son las identidades de la cuenta en us-east-2, porque en el sandbox SES comprueba también el permiso sobre la identidad del destinatario.
+  - **Avisos:** los rebotes y las quejas van al tema, sin las cabeceras del correo original (R016), y SES deja de reenviarlos por correo. El tema de avisos tiene que permitir publicar a SES (T016).
+  - **Si falla el MX del MAIL FROM,** SES usa el suyo por defecto: se pierde la alineación por SPF, pero DKIM mantiene DMARC y el correo sale.
 - **Alternativas descartadas:** un remitente en el dominio raíz `200oklabs.com`: la reputación del correo quedaría compartida con cualquier otro uso del dominio.
 - **Consecuencias:** la salida del sandbox tarda de 1 a 3 días hábiles y puede pedir aclaraciones. Hay que pedirla al empezar la implementación.
 
@@ -459,7 +462,8 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
 - **Contexto:** la cuenta del negocio (`955519187424`) pertenece a una organización de AWS administrada desde otra cuenta. Sus políticas (SCP), comprobadas con el simulador de políticas y con llamadas `--dry-run`, imponen dos cosas:
   - los recursos regionales solo se pueden crear en us-east-2, y los servicios globales se piden a us-east-1;
-  - no se pueden crear, ver ni listar proveedores de identidad, OIDC ni SAML (`p-n79p9if6`).
+  - no se pueden crear, ver ni listar proveedores de identidad, OIDC ni SAML (`p-n79p9if6`);
+  - la misma política deniega `ses:PutAccountDetails`, la acción que pide la salida del sandbox de SES (D14), e `iam:*LoginProfile`, así que ni siquiera se puede cambiar la contraseña de consola de un usuario IAM. Comprobado el 2026-11-13 con el simulador de políticas.
 - **Decisión:**
   - **Región:** el proveedor de Terraform por defecto es us-east-2 (ADR-0019). Un proveedor con alias `us_east_1` se usa solo para el certificado de ACM de CloudFront.
   - **Bucket del estado:** está en us-east-2, y los `backend` de los entornos lo apuntan ahí.
@@ -472,7 +476,10 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 - **Alternativas descartadas:**
   - Desplegar con las claves de un usuario IAM: ADR-0017 lo descartó, porque son credenciales de larga duración.
   - Pedir también la excepción para us-east-1: el usuario prefirió adaptarse a us-east-2 (ADR-0019).
-- **Consecuencias:** T018 depende de que exista el proveedor OIDC. Si la organización cambia sus políticas, se repite la comprobación previa antes de aplicar nada.
+- **Consecuencias:**
+  - T018 depende de que exista el proveedor OIDC, y la puesta en marcha en producción (T023), de salir del sandbox de SES. Las dos cosas se piden a quien administra la organización, con un caso de soporte de AWS (tipo «Account and billing»), porque la cuenta de gestión no es accesible.
+  - Si la organización no responde, las salidas son el plan B de despliegue (claves de un usuario IAM que solo asumen el rol, con un ADR nuevo) o una cuenta de AWS fuera de la organización, que cambia ADR-0019.
+  - Si la organización cambia sus políticas, se repite la comprobación previa antes de aplicar nada.
 
 ## Componentes afectados
 
@@ -708,7 +715,7 @@ Son el orden de magnitud con el que se aprobó el plan: precios de lista bajo de
 | Riesgo | Impacto | Mitigación |
 | ------ | ------- | ---------- |
 | La cuota de YouTube (10 000 unidades al día, 100 por búsqueda sin caché) no alcanza para 50 locales | Alto: la búsqueda deja de estar disponible a media noche | La caché de 24 h y la alarma al 80 % (R021). Pedir la ampliación a Google antes de abrir a los locales del piloto (D17). |
-| SES tarda en salir del sandbox o lo niega | Alto: bloquea R008 y la puesta en marcha | Pedirlo al empezar la implementación, con el uso descrito: correos transaccionales y bajo volumen (D14). |
+| SES no sale del sandbox: la organización deniega la petición (D18), o AWS tarda o la niega | Alto: bloquea R008 y la puesta en marcha | El caso de soporte de AWS para la organización (D18). Después, pedirlo con el uso descrito: correos transaccionales y bajo volumen (D14). |
 | La política de tratamiento definitiva no llega | Alto: la API no arranca en producción | Es un supuesto de la spec. La preproducción admite el borrador, así que todo lo demás se puede probar. |
 | La `db.t4g.medium` agota sus créditos de CPU con la carga sostenida de Q2 | Medio: latencia alta en la hora pico | La prueba de carga en la preproducción lo mide. Si pasa, se cambia a `db.m7g.large` y se rehace el coste. |
 | Q2 necesita más de 6 tareas de la API en Fargate | Medio | Lo mide la preproducción. Se sube el máximo y se recalculan las conexiones de RDS (D4). |
