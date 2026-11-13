@@ -75,6 +75,7 @@ variables {
   alb_security_group_id   = "sg-alb"
   tasks_security_group_id = "sg-tareas"
   public_validation_fqdn  = "_ghi.myplaylist.200oklabs.com"
+  email_identity_arn      = "arn:aws:ses:us-east-2:955519187424:identity/myplaylist.200oklabs.com"
   master_user_secret_arn  = "arn:aws:secretsmanager:us-east-2:955519187424:secret:rds!db-prueba"
   image_tag               = "v0.2.0-rc.1"
   database                = { host = "db.prueba", port = 5432, name = "myplaylist" }
@@ -440,17 +441,20 @@ run "F004_R008_las_tareas_fijan_aws_region_us_east_2" {
 
   # Solo el trabajador envía correo, y solo desde el dominio (D14).
   assert {
-    condition     = aws_iam_role_policy.send_email.role == aws_iam_role.task["worker"].id
+    condition     = length(aws_iam_role_policy.send_email) == 1 && aws_iam_role_policy.send_email[0].role == aws_iam_role.task["worker"].id
     error_message = "Solo el trabajador, que es quien envía el correo, puede usar SES (D14)."
   }
 
   assert {
-    condition     = toset(data.aws_iam_policy_document.send_email.statement[0].actions) == toset(["ses:SendEmail"])
-    error_message = "El trabajador solo puede enviar correo (D14)."
+    condition = (
+      toset(data.aws_iam_policy_document.send_email[0].statement[0].actions) == toset(["ses:SendEmail"]) &&
+      toset(data.aws_iam_policy_document.send_email[0].statement[0].resources) == toset(["arn:aws:ses:us-east-2:955519187424:identity/*"])
+    )
+    error_message = "El trabajador solo puede enviar correo, con las identidades de la cuenta en us-east-2: en el sandbox, SES comprueba también la del destinatario (D14)."
   }
 
   assert {
-    condition     = toset(one(data.aws_iam_policy_document.send_email.statement[0].condition).values) == toset(["*@myplaylist.200oklabs.com"])
+    condition     = toset(one(data.aws_iam_policy_document.send_email[0].statement[0].condition).values) == toset(["*@myplaylist.200oklabs.com"])
     error_message = "El trabajador solo envía como el dominio (D14)."
   }
 }
@@ -489,9 +493,10 @@ run "F004_R022_la_preproduccion_usa_el_catalogo_falso_y_borra_sus_imagenes" {
   }
 
   variables {
-    name       = "myplaylist-preproduction"
-    production = false
-    domain     = "pre.myplaylist.200oklabs.com"
+    name               = "myplaylist-preproduction"
+    production         = false
+    domain             = "pre.myplaylist.200oklabs.com"
+    email_identity_arn = null
     app_environment = {
       ENV              = "preproduction"
       EMAIL_BACKEND    = "smtp"
@@ -518,6 +523,11 @@ run "F004_R022_la_preproduccion_usa_el_catalogo_falso_y_borra_sus_imagenes" {
   assert {
     condition     = alltrue([for repository in aws_ecr_repository.this : repository.force_delete])
     error_message = "Destruir la preproducción borra también sus imágenes (R022)."
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.send_email) == 0
+    error_message = "Sin identidad de SES, como en preproducción, ninguna tarea puede enviar con SES (D13, D14)."
   }
 
   assert {

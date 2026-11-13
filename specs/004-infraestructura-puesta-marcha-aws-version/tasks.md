@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-11-09  |
-| Estado | Approved · 6a67c0db0b72       |
+| Estado | Approved · 89102436d598       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -315,22 +315,26 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T015 — Correo: SES en el dominio `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R008
 - **Depende de:** T009
 - **Archivos:**
   - `src/infra/modules/email/*.tf`
   - `src/infra/tests/email.tftest.hcl`
+  - `src/infra/modules/compute/{iam,variables}.tf` y `src/infra/tests/compute.tftest.hcl`: el permiso de envío del trabajador, solo con la identidad de SES (`email_identity_arn`) y ninguno en preproducción
+  - `src/infra/README.md` (la sección «Correo» y la fila del sandbox)
 - **Hecho cuando:** pasan:
   - `run "F004_R008_identidad_con_dkim_mail_from_y_dmarc"`;
   - `run "F004_R008_rebotes_y_quejas_van_al_tema_de_avisos"`.
 
-  **El usuario** pide la salida del sandbox de SES en us-east-2 (D14, ADR-0019), y la solicitud queda anotada en `src/infra/README.md` con su fecha.
+  Los avisos no se reenvían por correo. En `compute.tftest.hcl`, `F004_R008_las_tareas_fijan_aws_region_us_east_2` comprueba el permiso de envío, y el caso de preproducción, que no hay ninguno.
+
+  **El usuario** pide la salida del sandbox de SES en us-east-2 (D14, ADR-0019), y la solicitud queda anotada en `src/infra/README.md` con su fecha. Hoy la deniega la organización (D18): hasta que el caso de soporte lo resuelva, la tarea queda en `[~]`.
 
 ### T016 — Observabilidad: registros, alarmas, comprobaciones y presupuesto
 
 - **Estado:** `[ ]`
-- **Requisitos:** R011, R012, R013, R016, R020, R021
+- **Requisitos:** R008, R011, R012, R013, R016, R020, R021
 - **Depende de:** T013, T014
 - **Archivos:**
   - `src/infra/modules/observability/*.tf`
@@ -342,6 +346,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `run "F004_R016_todos_los_grupos_de_registros_guardan_30_dias"`;
   - `run "F004_R016_sin_registros_de_acceso_del_alb_ni_de_cloudfront"`;
   - `run "F004_R020_contributor_insights_cuenta_401_y_403_por_ip"`;
+  - `run "F004_R008_el_tema_de_avisos_admite_a_ses"`: la política del tema permite `sns:Publish` a `ses.amazonaws.com`, con la identidad del correo como origen (D14);
   - `run "F004_R021_alarma_de_cuota_de_youtube_en_8000"`, con la estadística `Maximum`, un periodo de 1 minuto y `treat_missing_data = notBreaching`;
   - `run "F004_R011_el_panel_muestra_sg1_a_sg6_y_la_disponibilidad_del_mes"`;
   - `run "presupuesto_con_aviso_por_correo"` (D12, sin requisito propio).
@@ -349,7 +354,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 ### T017 — Entornos `production` y `preproduction`
 
 - **Estado:** `[ ]`
-- **Requisitos:** R006, R022
+- **Requisitos:** R003, R006, R008, R022
 - **Depende de:** T014, T015, T016, T029
 - **Archivos:**
   - `src/infra/main.tf`
@@ -365,6 +370,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `run "F004_R022_todos_los_recursos_llevan_la_etiqueta_environment"`;
   - `run "F004_R006_redis_recibe_el_token_de_su_secreto_por_solo_escritura"`: el módulo raíz lee el secreto `redis-auth-token` con un recurso efímero y lo pasa a `auth_token_wo` del módulo de datos (D6).
 
+  - `run "F004_R008_solo_produccion_tiene_el_correo_de_ses"`: producción compone el módulo de correo y pasa su identidad al cómputo; la preproducción no lo tiene (D13);
   - `run "F004_R003_el_computo_recibe_el_registro_de_validacion_del_borde"`: `public_validation_fqdn` del cómputo es la salida del borde (D1);
   - `run "F004_R006_computo_y_borde_se_aplican_despues_de_los_secretos"`: los módulos de cómputo y de borde tienen `depends_on = [module.secrets]`, para que lean la cabecera de CloudFront cuando ya tiene versión (D6).
 
@@ -572,7 +578,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 | R005 | T013, T021 |
 | R006 | T008, T012, T013, T017, T018, T023 |
 | R007 | T001, T021, T026 |
-| R008 | T013, T015, T023, T028 |
+| R008 | T013, T015, T016, T017, T023, T028 |
 | R009 | T010, T011, T013, T014, T021 |
 | R010 | T011, T021 |
 | R011 | T002, T003, T004, T007, T016, T022 |

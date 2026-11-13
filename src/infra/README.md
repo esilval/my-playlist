@@ -67,6 +67,19 @@ El CI corre lo mismo en el trabajo `infra` de cada PR que toca `src/infra/`.
 - **La función `edge`** (`functions/edge.js`) corre en viewer-request en los tres comportamientos. Con la clave `maintenance` en `on` responde 503 a todo; si no, reescribe a `/index.html` las rutas de la SPA sin extensión. Si el almacén no responde, atiende. Se prueba con `node --test functions/edge.test.js`, que también corre en el CI.
 - **La clave `maintenance`** nace en `off`, y la cambia `maintenance.yml` (T020). Terraform no deshace su valor.
 
+## Correo (D14)
+
+`modules/email` crea, solo en producción, la identidad de SES de `myplaylist.200oklabs.com` en us-east-2. La preproducción envía a Mailpit (D13).
+
+- **DKIM:** Easy DKIM de 2048 bits, con sus tres CNAME en la zona.
+- **MAIL FROM:** `mail.myplaylist.200oklabs.com`, con su MX hacia SES en us-east-2 y SPF `v=spf1 include:amazonses.com -all`. El remitente y el MAIL FROM son del mismo dominio, así que DMARC queda alineado por SPF y por DKIM.
+- **DMARC:** `p=quarantine` en `_dmarc.myplaylist.200oklabs.com`.
+- **Rebotes y quejas:** van al tema de avisos, sin las cabeceras del correo original. El tema tiene que permitir publicar a `ses.amazonaws.com` con la identidad como origen (T016).
+- **Permisos:** solo el trabajador puede enviar, y solo como el dominio (`ses:FromAddress`). El recurso son las identidades de la cuenta en us-east-2, no solo la del dominio: en el sandbox, SES comprueba también la del destinatario verificado (módulo de cómputo, `email_identity_arn`).
+- **Sin reenvío por correo:** los avisos van solo al tema; `no-responder@` no tiene buzón.
+- **Si falla el MX** del MAIL FROM, SES envía con el suyo por defecto: se pierde la alineación por SPF, pero DKIM mantiene DMARC.
+- **La salida del sandbox** la pide una persona, y hoy la bloquea la organización (ver «Requisitos previos manuales»).
+
 ## Datos (D4)
 
 - **PostgreSQL:** RDS Multi-AZ con copias de 7 días. En producción tiene protección contra borrado, y al destruirse deja la instantánea `myplaylist-production-final`. Si producción se destruyera otra vez, antes hay que borrar o renombrar esa instantánea.
@@ -164,7 +177,7 @@ Lo que no se puede automatizar, en este orden:
 | ---- | ----- | ----- | --------- |
 | 2. Arranque | 2026-11-11 | El usuario, con el perfil `myplaylist` | Aplicado: 12 recursos, sin el proveedor OIDC. Zona `Z0639081273LJQWTITRKS`. Estado migrado a `s3://myplaylist-200oklabs-terraform-state/bootstrap/terraform.tfstate`, y `terraform plan` no encuentra diferencias. |
 | 2. Servidores de nombres | 2026-11-11 | El usuario, en el registrador | Delegados: `dig NS 200oklabs.com` devuelve `ns-493.awsdns-61.com`, `ns-810.awsdns-37.net`, `ns-1031.awsdns-00.org` y `ns-1779.awsdns-30.co.uk`. |
-| 3. Salida del sandbox de SES | | | pendiente |
+| 3. Salida del sandbox de SES | 2026-11-13 | Comprobado con el simulador de políticas | **Bloqueada:** la política de la organización `p-n79p9if6` deniega `ses:PutAccountDetails`, la acción que pide la salida. Sin ella, SES solo envía a direcciones verificadas. Va en el caso de soporte de AWS de D18. |
 
 ## Arranque
 
