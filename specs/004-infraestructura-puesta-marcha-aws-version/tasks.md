@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-11-09  |
-| Estado | Approved · 3f3097d8796d       |
+| Estado | Approved · c982d8ff8cf9       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -362,7 +362,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T017 — Entornos `production` y `preproduction`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003, R006, R008, R022
 - **Depende de:** T014, T015, T016, T029
 - **Archivos:**
@@ -372,6 +372,8 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `src/infra/environments/preproduction.tfvars`
   - `src/infra/environments/*.backend.hcl`
   - `src/infra/tests/environments.tftest.hcl`
+  - `src/infra/modules/compute/{iam,variables}.tf`, `src/infra/modules/observability/{topic,variables,outputs}.tf` y sus pruebas: el permiso de SES y la política del tema dependen del entorno, no de la identidad, que el primer plan de producción aún no conoce; validan que producción recibe la identidad; y el tema se da al módulo de correo cuando su política ya admite a SES
+  - `src/infra/README.md` (la sección «Entornos»)
 - **Hecho cuando:** pasan:
   - `run "F004_R022_los_dos_entornos_usan_el_mismo_modulo_y_la_misma_capacidad"`;
   - `run "F004_R022_preproduccion_usa_el_catalogo_falso_mailpit_y_su_dominio"`;
@@ -381,7 +383,12 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
   - `run "F004_R008_solo_produccion_tiene_el_correo_de_ses"`: producción compone el módulo de correo y pasa su identidad al cómputo; la preproducción no lo tiene (D13);
   - `run "F004_R003_el_computo_recibe_el_registro_de_validacion_del_borde"`: `public_validation_fqdn` del cómputo es la salida del borde (D1);
-  - `run "F004_R006_computo_y_borde_se_aplican_despues_de_los_secretos"`: los módulos de cómputo y de borde tienen `depends_on = [module.secrets]`, para que lean la cabecera de CloudFront cuando ya tiene versión (D6).
+  - `run "F004_R006_computo_y_borde_se_aplican_despues_de_los_secretos"`: los módulos de cómputo y de borde tienen `depends_on = [module.secrets]`, para que lean la cabecera de CloudFront cuando ya tiene versión (D6);
+  - `run "F004_R016_el_computo_recibe_los_grupos_de_la_observabilidad"`;
+  - `run "F004_R013_un_entorno_nuevo_arranca_con_el_canario_parado"` y `run "F004_R013_el_canario_no_arranca_sin_establecimiento_de_prueba"`;
+  - `run "F004_R007_produccion_no_se_aplica_con_la_politica_en_borrador"`.
+
+  Lo que no se ve desde el módulo raíz (el cableado efímero, los `depends_on`) se comprueba leyendo `main.tf` con expresiones ancladas a la línea, que no cuentan los comentarios. Los `.tfvars` solo fijan el entorno, su zona, la etiqueta inicial y valores de operación (`data_policy_version`, `canary_enabled`, `canary_establishment_code`), nunca la capacidad. El correo de avisos no se versiona: llega por `TF_VAR_alert_email`.
 
   El módulo de observabilidad pasa al de cómputo sus `log_groups`, con las claves `api`, `worker`, `realtime` y `migrate`, y en preproducción también `mailpit` y `k6`, sin `depends_on` entre los dos: los grupos no dependen del cómputo, pero las alarmas sí. El entorno pasa los `mailpit_ports` del cómputo al módulo de red.
 
@@ -425,7 +432,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `accion=levantar` deja la preproducción en marcha con la etiqueta desplegada, y `accion=destruir` la destruye y comprueba que no queda nada.
   - `preproduction.yml`, con `accion=probar-carga` y `establishments=50`, crea la preproducción, despliega, corre k6 en Fargate y destruye. La imagen `grafana/k6` no trae el guion: el flujo se lo da a la tarea de T029, por ejemplo con una imagen propia que copie `src/perf/` sobre la misma versión. Con eso:
     - **`F004_R017`:** cumple la búsqueda p95 < 2 s, el estado p95 < 1 s y 0 errores 5xx. El resultado queda en la cabecera de `client.js` y en `docs/qa/infra-resiliencia.md`. Si no cumple, se detiene la tarea y se consulta al usuario: tamaño de las tareas, clase de RDS o enmienda.
-    - **`F004_R022`:** tras destruir, no queda ningún recurso con la etiqueta `environment=preproduction`, y producción no cambió. El mismo caso registra también la comprobación de `levantar` y `destruir`.
+    - **`F004_R022`:** tras destruir, no queda ningún recurso con la etiqueta `environment=preproduction`, y producción no cambió. El mismo caso registra también la comprobación de `levantar` y `destruir`. La etiqueta no llega a lo que AWS crea por su cuenta, así que la comprobación busca además, por su nombre: las interfaces de red de las tareas, el grupo de registros de la Lambda del canario, el secreto del usuario maestro de RDS y las tareas de `run-task`, que se lanzan con `--propagate-tags TASK_DEFINITION` (T017).
 
 ### T020 — Retirar y volver
 

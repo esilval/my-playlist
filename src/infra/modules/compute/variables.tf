@@ -25,9 +25,14 @@ variable "public_validation_fqdn" {
 }
 
 variable "email_identity_arn" {
-  description = "La identidad de SES del módulo de correo: la única desde la que envía el trabajador (D14). Sin ella, como en preproducción, que envía a Mailpit, nadie puede usar SES."
+  description = "La identidad de SES del módulo de correo, solo en producción (D14). La preproducción envía a Mailpit, y nadie puede usar SES."
   type        = string
   default     = null
+
+  validation {
+    condition     = !var.production || var.email_identity_arn != null
+    error_message = "Producción envía con SES: hace falta la identidad del módulo de correo."
+  }
 }
 
 variable "zone_id" {

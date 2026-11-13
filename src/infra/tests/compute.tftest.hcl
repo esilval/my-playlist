@@ -755,3 +755,17 @@ run "F004_R016_sin_registros_de_acceso_del_alb_ni_de_cloudfront" {
     error_message = "Ni registros de conexión, que llevan la IP de todas las peticiones (R016)."
   }
 }
+
+run "F004_R008_produccion_no_se_aplica_sin_la_identidad_de_ses" {
+  command = plan
+
+  module {
+    source = "./modules/compute"
+  }
+
+  variables {
+    email_identity_arn = null
+  }
+
+  expect_failures = [var.email_identity_arn]
+}

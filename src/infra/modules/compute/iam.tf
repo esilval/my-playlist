@@ -53,7 +53,8 @@ resource "aws_iam_role" "task" {
 }
 
 data "aws_iam_policy_document" "send_email" {
-  count = var.email_identity_arn == null ? 0 : 1
+  # Según el entorno y no según la identidad, que en el primer plan aún no se conoce.
+  count = var.production ? 1 : 0
 
   statement {
     actions = ["ses:SendEmail"]
@@ -72,11 +73,12 @@ data "aws_iam_policy_document" "send_email" {
 
 locals {
   # `arn:aws:ses:<región>:<cuenta>:identity`, a partir de la identidad del dominio.
-  ses_identities_prefix = var.email_identity_arn == null ? null : join(":", concat(slice(split(":", var.email_identity_arn), 0, 5), ["identity"]))
+  ses_identities_prefix = var.production ? join(":", concat(slice(split(":", var.email_identity_arn), 0, 5), ["identity"])) : null
 }
 
 resource "aws_iam_role_policy" "send_email" {
-  count = var.email_identity_arn == null ? 0 : 1
+  # Según el entorno y no según la identidad, que en el primer plan aún no se conoce.
+  count = var.production ? 1 : 0
 
   name   = "send-email"
   role   = aws_iam_role.task["worker"].id
