@@ -53,6 +53,11 @@ mock_provider "aws" {
       arn = "arn:aws:elasticloadbalancing:us-east-2:955519187424:listener/app/myplaylist-production/1/1"
     }
   }
+  mock_resource "aws_service_discovery_service" {
+    defaults = {
+      arn = "arn:aws:servicediscovery:us-east-2:955519187424:service/srv-mailpit"
+    }
+  }
   mock_data "aws_iam_policy_document" {
     defaults = {
       json = "{}"
@@ -497,6 +502,9 @@ run "F004_R022_la_preproduccion_usa_el_catalogo_falso_y_borra_sus_imagenes" {
     production         = false
     domain             = "pre.myplaylist.200oklabs.com"
     email_identity_arn = null
+    log_groups = {
+      for task in ["api", "worker", "realtime", "migrate", "mailpit", "k6"] : task => "/myplaylist/preproduction/${task}"
+    }
     app_environment = {
       ENV              = "preproduction"
       EMAIL_BACKEND    = "smtp"
@@ -546,5 +554,185 @@ run "F004_R022_la_preproduccion_usa_el_catalogo_falso_y_borra_sus_imagenes" {
   assert {
     condition     = alltrue([for group in aws_lb_target_group.this : length(group.name) <= 32])
     error_message = "Los nombres de los grupos de destino caben en 32 caracteres también en preproducción."
+  }
+}
+
+# T029 (D13): solo la preproducción tiene Mailpit y la tarea de k6.
+run "F004_R022_preproduccion_tiene_mailpit_con_dns_privado" {
+  command   = apply
+  state_key = "preproduction"
+
+  module {
+    source = "./modules/compute"
+  }
+
+  variables {
+    name               = "myplaylist-preproduction"
+    production         = false
+    domain             = "pre.myplaylist.200oklabs.com"
+    email_identity_arn = null
+    log_groups = {
+      for task in ["api", "worker", "realtime", "migrate", "mailpit", "k6"] : task => "/myplaylist/preproduction/${task}"
+    }
+    app_environment = {
+      ENV              = "preproduction"
+      EMAIL_BACKEND    = "smtp"
+      PUBLIC_BASE_URL  = "https://pre.myplaylist.200oklabs.com"
+      CATALOG_PROVIDER = "fake"
+    }
+  }
+
+  override_resource {
+    target = aws_acm_certificate.origin
+    values = {
+      arn = "arn:aws:acm:us-east-2:955519187424:certificate/origen-pre"
+      domain_validation_options = [
+        for domain in ["origin.pre.myplaylist.200oklabs.com", "pre.myplaylist.200oklabs.com"] : {
+          domain_name           = domain
+          resource_record_name  = "_abc.${domain}."
+          resource_record_type  = "CNAME"
+          resource_record_value = "_def.acm-validations.aws."
+        }
+      ]
+    }
+  }
+
+  assert {
+    condition = (
+      aws_service_discovery_private_dns_namespace.this[0].name == "myplaylist-preproduction.internal" &&
+      aws_service_discovery_private_dns_namespace.this[0].vpc == "vpc-prueba" &&
+      aws_service_discovery_service.mailpit[0].name == "mailpit"
+    )
+    error_message = "Mailpit tiene un nombre en una zona DNS privada de la VPC, que solo se ve desde dentro (D13)."
+  }
+
+  assert {
+    condition = (
+      aws_ecs_service.mailpit[0].desired_count == 1 &&
+      one(aws_ecs_service.mailpit[0].service_registries).registry_arn == aws_service_discovery_service.mailpit[0].arn &&
+      one(aws_ecs_service.mailpit[0].network_configuration).security_groups == toset(["sg-tareas"]) &&
+      length(aws_ecs_service.mailpit[0].load_balancer) == 0 &&
+      aws_ecs_service.mailpit[0].propagate_tags == "SERVICE"
+    )
+    error_message = "Mailpit es un servicio de una tarea, registrado en esa zona, con el grupo de las tareas y sin pasar por el ALB (D13)."
+  }
+
+  assert {
+    condition = (
+      jsondecode(aws_ecs_task_definition.tools["mailpit"].container_definitions)[0].image == "axllent/mailpit:v1.31.6" &&
+      toset([for mapping in jsondecode(aws_ecs_task_definition.tools["mailpit"].container_definitions)[0].portMappings : mapping.containerPort]) == toset([1025, 8025])
+    )
+    error_message = "Mailpit en la versión del compose, con SMTP en 1025 y su API en 8025 (D13)."
+  }
+
+  assert {
+    condition = alltrue([
+      for task in ["api", "worker"] :
+      contains(jsondecode(aws_ecs_task_definition.this[task].container_definitions)[0].environment, { name = "SMTP_HOST", value = "mailpit.myplaylist-preproduction.internal" }) &&
+      contains(jsondecode(aws_ecs_task_definition.this[task].container_definitions)[0].environment, { name = "SMTP_PORT", value = "1025" })
+    ])
+    error_message = "La API y el trabajador envían el correo a Mailpit por su nombre (D13)."
+  }
+
+  assert {
+    condition     = output.mailpit_ports.smtp == 1025 && output.mailpit_ports.http == 8025 && length(output.mailpit_ports) == 2
+    error_message = "El cómputo da al módulo de red los puertos que tiene que abrir entre las tareas (D13)."
+  }
+}
+
+run "F004_R017_preproduccion_tiene_la_definicion_de_k6" {
+  command   = apply
+  state_key = "preproduction"
+
+  module {
+    source = "./modules/compute"
+  }
+
+  variables {
+    name               = "myplaylist-preproduction"
+    production         = false
+    domain             = "pre.myplaylist.200oklabs.com"
+    email_identity_arn = null
+    log_groups = {
+      for task in ["api", "worker", "realtime", "migrate", "mailpit", "k6"] : task => "/myplaylist/preproduction/${task}"
+    }
+    app_environment = {
+      ENV              = "preproduction"
+      EMAIL_BACKEND    = "smtp"
+      PUBLIC_BASE_URL  = "https://pre.myplaylist.200oklabs.com"
+      CATALOG_PROVIDER = "fake"
+    }
+  }
+
+  override_resource {
+    target = aws_acm_certificate.origin
+    values = {
+      arn = "arn:aws:acm:us-east-2:955519187424:certificate/origen-pre"
+      domain_validation_options = [
+        for domain in ["origin.pre.myplaylist.200oklabs.com", "pre.myplaylist.200oklabs.com"] : {
+          domain_name           = domain
+          resource_record_name  = "_abc.${domain}."
+          resource_record_type  = "CNAME"
+          resource_record_value = "_def.acm-validations.aws."
+        }
+      ]
+    }
+  }
+
+  assert {
+    condition = (
+      aws_ecs_task_definition.tools["k6"].cpu == "4096" &&
+      aws_ecs_task_definition.tools["k6"].memory == "8192" &&
+      jsondecode(aws_ecs_task_definition.tools["k6"].container_definitions)[0].image == "grafana/k6:1.4.0"
+    )
+    error_message = "k6 corre en una tarea de 4 vCPU y 8 GiB, con una versión fija (D13)."
+  }
+
+  assert {
+    condition = (
+      contains(jsondecode(aws_ecs_task_definition.tools["k6"].container_definitions)[0].environment, { name = "API_URL", value = "https://pre.myplaylist.200oklabs.com" }) &&
+      contains(jsondecode(aws_ecs_task_definition.tools["k6"].container_definitions)[0].environment, { name = "MAILPIT_URL", value = "http://mailpit.myplaylist-preproduction.internal:8025" }) &&
+      contains(jsondecode(aws_ecs_task_definition.tools["k6"].container_definitions)[0].environment, { name = "ESTABLISHMENTS", value = "50" })
+    )
+    error_message = "k6 pasa por el dominio público, como un cliente real, lee Mailpit dentro de la VPC y simula 50 establecimientos (D13, R017)."
+  }
+
+  assert {
+    condition     = !contains(keys(aws_ecs_service.this), "k6") && output.load_test_task_definition == "myplaylist-preproduction-k6"
+    error_message = "k6 es una tarea que se lanza para cada prueba, no un servicio (D13)."
+  }
+
+  assert {
+    condition     = !can(jsondecode(aws_ecs_task_definition.tools["k6"].container_definitions)[0].secrets)
+    error_message = "k6 no recibe ningún secreto (R006)."
+  }
+}
+
+run "F004_R022_produccion_no_tiene_mailpit_ni_k6" {
+  command = apply
+
+  module {
+    source = "./modules/compute"
+  }
+
+  assert {
+    condition = (
+      length(aws_ecs_task_definition.tools) == 0 &&
+      length(aws_ecs_service.mailpit) == 0 &&
+      length(aws_service_discovery_private_dns_namespace.this) == 0 &&
+      length(aws_iam_role.tools_execution) == 0 &&
+      output.load_test_task_definition == null &&
+      length(output.mailpit_ports) == 0
+    )
+    error_message = "Producción no tiene Mailpit, k6 ni su zona DNS (D13)."
+  }
+
+  assert {
+    condition = alltrue([
+      for definition in aws_ecs_task_definition.this : !anytrue([
+        for variable in jsondecode(definition.container_definitions)[0].environment : startswith(variable.name, "SMTP_")
+      ])
+    ])
+    error_message = "En producción, el correo sale por SES y no hay SMTP (D14)."
   }
 }

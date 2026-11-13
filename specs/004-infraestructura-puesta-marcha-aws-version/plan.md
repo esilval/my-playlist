@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-11-09         |
-| Estado | Approved · 1702d7268b22              |
+| Estado | Approved · 92d53dc3454e              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -105,7 +105,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 - **Contexto:** las tareas necesitan salir a internet: YouTube, SES, Secrets Manager, ECR y CloudWatch. Un NAT Gateway cuesta unos US$32 al mes por zona, más el tráfico. Y con uno solo, se vuelve un punto único de fallo para Q3.
 - **Decisión:**
   - Una VPC con dos zonas: subredes públicas para el ALB y las tareas de ECS, y subredes privadas, sin salida a internet, para RDS y ElastiCache.
-  - Las tareas tienen IP pública, pero su grupo de seguridad solo admite entradas desde el ALB.
+  - Las tareas tienen IP pública, pero su grupo de seguridad solo admite entradas desde el ALB. En preproducción admite además, entre las propias tareas, los dos puertos de Mailpit (D13).
   - RDS y Redis solo admiten conexiones desde los grupos de seguridad de las tareas.
 - **Alternativas descartadas:**
   - NAT Gateway en cada zona: unos US$65 al mes, más el tráfico.
@@ -372,7 +372,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
   - **El mismo módulo raíz de Terraform** con `environment = "preproduction"`, su propio estado y su archivo de variables. Lo que cambia:
     - el dominio es `pre.myplaylist.200oklabs.com`;
     - `ENV=preproduction` y `CATALOG_PROVIDER=fake`;
-    - el correo va por SMTP a un servicio Mailpit del mismo clúster, que solo se ve dentro de la VPC (Service Connect);
+    - el correo va por SMTP a un servicio Mailpit del mismo clúster, que solo se ve dentro de la VPC: se registra en una zona DNS privada (Cloud Map, `mailpit.<nombre>.internal`), y sus puertos solo se abren entre las tareas. No se usa Service Connect porque solo funciona entre servicios, y k6, que lee los correos, es una tarea suelta;
     - RDS sin protección contra borrado ni instantánea final.
 
     La capacidad y la topología son las mismas.
@@ -386,7 +386,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
     - **`destruir`:** el paso 4.
 
     Siempre que destruye, lista los recursos con la etiqueta `environment=preproduction` y falla si queda alguno (R022).
-  - **La prueba de carga:** k6 corre como una tarea de Fargate de 4 vCPU y 8 GiB dentro de la VPC de preproducción, con `grafana/k6` en una versión fija. Ejecuta `src/perf/client.js` con `API_URL=https://pre.myplaylist.200oklabs.com`, para pasar por CloudFront y el ALB como un cliente real, `ESTABLISHMENTS=50` y `MAILPIT_URL` interno. El resumen de k6 queda en los registros y se anota en la cabecera de `client.js` (R017).
+  - **La prueba de carga:** k6 corre como una tarea de Fargate de 4 vCPU y 8 GiB dentro de la VPC de preproducción, con `grafana/k6` en una versión fija (1.4.0). Ejecuta `src/perf/client.js` con `API_URL=https://pre.myplaylist.200oklabs.com`, para pasar por CloudFront y el ALB como un cliente real, `ESTABLISHMENTS=50` y `MAILPIT_URL` interno. El resumen de k6 queda en los registros y se anota en la cabecera de `client.js` (R017).
   - **Otras pruebas:** la misma preproducción sirve para las de entorno que no conviene hacer en producción: caídas (R009), migración fallida y configuración incorrecta (R005, R007), alarmas (R012, R013, R020) y retirada (R014, R015).
 - **Alternativas descartadas:**
   - k6 desde el portátil: no aguanta 5000 clientes (D10 de 003), y mediría la red doméstica.
@@ -486,7 +486,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | Componente | Cambio | Requisitos que cubre |
 | ---------- | ------ | -------------------- |
 | `src/infra/bootstrap/` | Bucket del estado en us-east-2, zona de Route 53, proveedor OIDC (opcional, D18) y roles de despliegue y de plan (D17) | R001, R002 |
-| `src/infra/modules/network` | VPC, subredes en dos zonas y grupos de seguridad (D2); en preproducción, el puerto SMTP de Mailpit entre las tareas (D13) | R009, R022 |
+| `src/infra/modules/network` | VPC, subredes en dos zonas y grupos de seguridad (D2); en preproducción, los puertos de Mailpit (SMTP y su API) entre las tareas (D13) | R009, R022 |
 | `src/infra/modules/edge` | CloudFront, el certificado del dominio público (us-east-1), el origen del ALB por HTTPS, los alias de Route 53, el bucket de la SPA, la función `edge` (rutas de la SPA y mantenimiento), el KeyValueStore y la política que reenvía `CloudFront-Viewer-Address` (D1, D10, D11) | R003, R014, R015, R020 |
 | `src/infra/modules/data` | RDS Multi-AZ con sus copias y ElastiCache con réplica (D4) | R009, R010 |
 | `src/infra/modules/compute` | Clúster de ECS, ECR, ALB con su listener HTTPS, el certificado del origen (us-east-2) y su registro alias, los servicios, el autoescalado, el «circuit breaker», la tarea de migración, Mailpit y k6 en preproducción (D3, D8, D13) | R003, R004, R005, R009, R017, R022 |

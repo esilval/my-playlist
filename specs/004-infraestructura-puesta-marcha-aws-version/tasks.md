@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-11-09  |
-| Estado | Approved · 89102436d598       |
+| Estado | Approved · 0f30f50af915       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -343,7 +343,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `run "F004_R011_hay_una_alarma_por_umbral_de_sg1_a_sg6"`;
   - `run "F004_R012_cada_alarma_avisa_al_tema_con_la_suscripcion_por_correo"`;
   - `run "F004_R013_comprobaciones_de_route_53_cada_30_s"`;
-  - `run "F004_R016_todos_los_grupos_de_registros_guardan_30_dias"`;
+  - `run "F004_R016_todos_los_grupos_de_registros_guardan_30_dias"`: también los de `mailpit` y `k6`, que solo existen en preproducción (T029);
   - `run "F004_R016_sin_registros_de_acceso_del_alb_ni_de_cloudfront"`;
   - `run "F004_R020_contributor_insights_cuenta_401_y_403_por_ip"`;
   - `run "F004_R008_el_tema_de_avisos_admite_a_ses"`: la política del tema permite `sns:Publish` a `ses.amazonaws.com`, con la identidad del correo como origen (D14);
@@ -374,7 +374,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `run "F004_R003_el_computo_recibe_el_registro_de_validacion_del_borde"`: `public_validation_fqdn` del cómputo es la salida del borde (D1);
   - `run "F004_R006_computo_y_borde_se_aplican_despues_de_los_secretos"`: los módulos de cómputo y de borde tienen `depends_on = [module.secrets]`, para que lean la cabecera de CloudFront cuando ya tiene versión (D6).
 
-  El módulo de observabilidad pasa al de cómputo sus `log_groups`, con las claves `api`, `worker`, `realtime` y `migrate`, sin `depends_on` entre los dos: los grupos no dependen del cómputo, pero las alarmas sí.
+  El módulo de observabilidad pasa al de cómputo sus `log_groups`, con las claves `api`, `worker`, `realtime` y `migrate`, y en preproducción también `mailpit` y `k6`, sin `depends_on` entre los dos: los grupos no dependen del cómputo, pero las alarmas sí. El entorno pasa los `mailpit_ports` del cómputo al módulo de red.
 
   La rotación del token de Redis (subir a la vez `rotation["redis-auth-token"]` y `redis_auth_token_version`) queda en `src/infra/README.md`.
 
@@ -410,7 +410,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `docs/qa/infra-resiliencia.md`
 - **Hecho cuando:**
   - `accion=levantar` deja la preproducción en marcha con la etiqueta desplegada, y `accion=destruir` la destruye y comprueba que no queda nada.
-  - `preproduction.yml`, con `accion=probar-carga` y `establishments=50`, crea la preproducción, despliega, corre k6 en Fargate y destruye. Con eso:
+  - `preproduction.yml`, con `accion=probar-carga` y `establishments=50`, crea la preproducción, despliega, corre k6 en Fargate y destruye. La imagen `grafana/k6` no trae el guion: el flujo se lo da a la tarea de T029, por ejemplo con una imagen propia que copie `src/perf/` sobre la misma versión. Con eso:
     - **`F004_R017`:** cumple la búsqueda p95 < 2 s, el estado p95 < 1 s y 0 errores 5xx. El resultado queda en la cabecera de `client.js` y en `docs/qa/infra-resiliencia.md`. Si no cumple, se detiene la tarea y se consulta al usuario: tamaño de las tareas, clase de RDS o enmienda.
     - **`F004_R022`:** tras destruir, no queda ningún recurso con la etiqueta `environment=preproduction`, y producción no cambió. El mismo caso registra también la comprobación de `levantar` y `destruir`.
 
@@ -553,7 +553,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T029 — Preproducción: Mailpit y la tarea de k6
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R017, R022
 - **Depende de:** T013
 - **Archivos:**
@@ -561,11 +561,13 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `src/infra/modules/network/*.tf`
   - `src/infra/tests/compute.tftest.hcl`
   - `src/infra/tests/network.tftest.hcl`
+  - `src/infra/README.md` (la sección «Preproducción: Mailpit y k6»)
 - **Hecho cuando:** con `production = false` (D13), pasan:
-  - `run "F004_R022_preproduccion_tiene_mailpit_por_service_connect"`: un servicio Mailpit de una tarea, con Service Connect en el clúster, al que la API y el trabajador llegan por nombre (`SMTP_HOST`), sin pasar por el ALB;
+  - `run "F004_R022_preproduccion_tiene_mailpit_con_dns_privado"`: un servicio Mailpit de una tarea, registrado en una zona DNS privada de la VPC (Cloud Map), al que la API y el trabajador llegan por nombre (`SMTP_HOST`), sin pasar por el ALB;
   - `run "F004_R022_el_puerto_smtp_solo_se_abre_entre_las_tareas_en_preproduccion"`: la regla del puerto SMTP referencia el grupo de las tareas, y en producción no existe;
   - `run "F004_R017_preproduccion_tiene_la_definicion_de_k6"`: una definición de tarea de 4 vCPU y 8 GiB con `grafana/k6` en una versión fija, que no es un servicio;
-  - `run "F004_R022_produccion_no_tiene_mailpit_ni_k6"`.
+  - `run "F004_R022_produccion_no_tiene_mailpit_ni_k6"`;
+  - `run "F004_R022_produccion_no_abre_el_puerto_smtp"`.
 
 ## Cobertura
 

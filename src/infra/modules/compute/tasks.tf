@@ -31,13 +31,18 @@ locals {
     REDIS_PORT = tostring(var.redis.port)
   }
   region_environment = { AWS_REGION = var.region }
+  # En preproducción, el correo va a Mailpit, que se encuentra por su nombre en la VPC (D13).
+  smtp_environment = var.production ? {} : {
+    SMTP_HOST = local.mailpit_host
+    SMTP_PORT = tostring(local.mailpit_ports.smtp)
+  }
 
   tasks = {
     api = {
       image   = "api"
       command = null # el de la imagen: app.ops.env y uvicorn, sin migrar (D3, D8)
       port    = 8000
-      environment = merge(var.app_environment, local.region_environment, local.database_environment, local.redis_environment, {
+      environment = merge(var.app_environment, local.region_environment, local.database_environment, local.redis_environment, local.smtp_environment, {
         DATABASE_USER = "myplaylist_api"
         API_WORKERS   = tostring(var.api_workers)
       })
@@ -50,7 +55,7 @@ locals {
       image   = "api"
       command = ["python", "-m", "app.ops.env", "python", "-m", "app.worker"]
       port    = null
-      environment = merge(var.app_environment, local.region_environment, local.database_environment, local.redis_environment, {
+      environment = merge(var.app_environment, local.region_environment, local.database_environment, local.redis_environment, local.smtp_environment, {
         DATABASE_USER = "myplaylist_worker"
       })
       secrets = merge(local.app_secrets, {

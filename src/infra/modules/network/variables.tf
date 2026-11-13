@@ -27,3 +27,9 @@ variable "service_ports" {
     realtime = 3001
   }
 }
+
+variable "mailpit_ports" {
+  description = "Solo en preproducción: los puertos de Mailpit (SMTP y su API), abiertos entre las tareas (D13). En producción, ninguno."
+  type        = map(number)
+  default     = {}
+}

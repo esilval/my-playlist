@@ -85,12 +85,17 @@ variable "redis" {
 }
 
 variable "log_groups" {
-  description = "Grupo de registros de cada tarea, que crea el módulo de observabilidad con 30 días (D12)."
+  description = "Grupo de registros de cada tarea, que crea el módulo de observabilidad con 30 días (D12). La preproducción añade mailpit y k6 (D13)."
   type        = map(string)
 
   validation {
     condition     = length(setsubtract(["api", "worker", "realtime", "migrate"], keys(var.log_groups))) == 0
     error_message = "Hace falta un grupo para api, worker, realtime y migrate."
+  }
+
+  validation {
+    condition     = var.production || length(setsubtract(["mailpit", "k6"], keys(var.log_groups))) == 0
+    error_message = "En preproducción hace falta también un grupo para mailpit y k6."
   }
 }
 
@@ -146,4 +151,22 @@ variable "api_workers" {
   description = "Procesos de uvicorn por tarea de la API: tantos como vCPU (ADR-0015, D3)."
   type        = number
   default     = 2
+}
+
+variable "mailpit_image" {
+  description = "Solo en preproducción: el buzón de pruebas, en la misma versión que el compose (D13)."
+  type        = string
+  default     = "axllent/mailpit:v1.31.6"
+}
+
+variable "k6_image" {
+  description = "Solo en preproducción: k6 en una versión fija para la prueba de carga (D13, R017)."
+  type        = string
+  default     = "grafana/k6:1.4.0"
+}
+
+variable "load_test_establishments" {
+  description = "Establecimientos de la prueba de carga: los 50 del piloto (D13, R017)."
+  type        = number
+  default     = 50
 }
