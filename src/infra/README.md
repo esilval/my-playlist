@@ -193,9 +193,11 @@ Petición a quien administra la organización:
 > guardadas. Los roles que lo usan solo aceptan los entornos protegidos del repositorio
 > `esilval/my-playlist`.
 
-| Fecha de la petición | Respuesta | Fecha de la respuesta |
-| -------------------- | --------- | --------------------- |
-| | pendiente | |
+La cuenta de gestión de la organización (`616793442849`) tiene como correo el del usuario, pero no admite el acceso como raíz con él, así que la petición se hizo a AWS con un caso de soporte. El caso pide recuperar el acceso a esa cuenta, saber quién administra la organización o sacar la cuenta `955519187424` de ella, e incluye los otros bloqueos de la misma SCP: la salida del sandbox de SES (`ses:PutAccountDetails`) y las contraseñas de consola (`iam:*LoginProfile`).
+
+| Fecha de la petición | A quién | Respuesta | Fecha de la respuesta |
+| -------------------- | ------- | --------- | --------------------- |
+| 2026-11-13 | AWS, caso de soporte `179460898900807` (Account Activation → General Question) | pendiente | |
 
 ## Requisitos previos manuales (D17)
 
@@ -223,7 +225,7 @@ Lo que no se puede automatizar, en este orden:
 | ---- | ----- | ----- | --------- |
 | 2. Arranque | 2026-11-11 | El usuario, con el perfil `myplaylist` | Aplicado: 12 recursos, sin el proveedor OIDC. Zona `Z0639081273LJQWTITRKS`. Estado migrado a `s3://myplaylist-200oklabs-terraform-state/bootstrap/terraform.tfstate`, y `terraform plan` no encuentra diferencias. |
 | 2. Servidores de nombres | 2026-11-11 | El usuario, en el registrador | Delegados: `dig NS 200oklabs.com` devuelve `ns-493.awsdns-61.com`, `ns-810.awsdns-37.net`, `ns-1031.awsdns-00.org` y `ns-1779.awsdns-30.co.uk`. |
-| 3. Salida del sandbox de SES | 2026-11-13 | Comprobado con el simulador de políticas | **Bloqueada:** la política de la organización `p-n79p9if6` deniega `ses:PutAccountDetails`, la acción que pide la salida. Sin ella, SES solo envía a direcciones verificadas. Va en el caso de soporte de AWS de D18. |
+| 3. Salida del sandbox de SES | 2026-11-13 | Comprobado con el simulador de políticas | **Bloqueada:** la política de la organización `p-n79p9if6` deniega `ses:PutAccountDetails`, la acción que pide la salida. Sin ella, SES solo envía a direcciones verificadas. Va en el caso de soporte `179460898900807` (ver «El proveedor OIDC de GitHub»). |
 
 ## Arranque
 
