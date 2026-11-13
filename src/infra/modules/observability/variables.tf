@@ -53,6 +53,11 @@ variable "email_identity_arn" {
   description = "La identidad de SES, solo en producción: el tema admite sus rebotes y quejas (D14)."
   type        = string
   default     = null
+
+  validation {
+    condition     = var.environment != "production" || var.email_identity_arn != null
+    error_message = "Producción recibe los rebotes y quejas de SES: hace falta la identidad del módulo de correo."
+  }
 }
 
 variable "monthly_budget_usd" {

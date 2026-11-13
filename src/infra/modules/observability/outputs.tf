@@ -6,6 +6,9 @@ output "log_groups" {
 output "alerts_topic_arn" {
   description = "El tema de avisos: lo usan las alarmas y, en producción, los rebotes y quejas de SES (D12, D14)."
   value       = aws_sns_topic.alerts.arn
+  # El módulo de correo configura los avisos de SES con este tema: espera a que su política
+  # deje publicar a SES.
+  depends_on = [aws_sns_topic_policy.alerts]
 }
 
 output "canary_name" {

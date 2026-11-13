@@ -480,3 +480,17 @@ run "F004_R013_un_entorno_nuevo_no_avisa_de_sg3_hasta_que_atiende" {
     error_message = "Y las alarmas de SG3 no avisan, porque sin canario ni tareas estarían en ALARM sin motivo; las demás, sí."
   }
 }
+
+run "F004_R008_el_tema_de_produccion_necesita_la_identidad_de_ses" {
+  command = plan
+
+  module {
+    source = "./modules/observability"
+  }
+
+  variables {
+    email_identity_arn = null
+  }
+
+  expect_failures = [var.email_identity_arn]
+}

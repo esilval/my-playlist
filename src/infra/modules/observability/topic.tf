@@ -46,7 +46,8 @@ data "aws_iam_policy_document" "alerts" {
   }
 
   dynamic "statement" {
-    for_each = var.email_identity_arn == null ? [] : [var.email_identity_arn]
+    # Según el entorno y no según la identidad, que en el primer plan aún no se conoce.
+    for_each = local.production ? [var.email_identity_arn] : []
 
     content {
       sid       = "RebotesYQuejasDeSes"

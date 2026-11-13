@@ -32,7 +32,7 @@ El CI corre lo mismo en el trabajo `infra` de cada PR que toca `src/infra/`.
 | Secreto | Quién lo genera | ¿Queda en el estado? | Cómo se rota |
 | ------- | --------------- | -------------------- | ------------ |
 | `realtime-ticket-secret`, `device-token-secret`, `database-api-password`, `database-worker-password` | Terraform: efímero (`random_password`, 48 caracteres) y escrito con `secret_string_wo` | No | Subir su número en `rotation` y volver a desplegar. Las dos contraseñas de la base las vuelve a asignar `app.ops.db_users` en la tarea de migración (D5). |
-| `redis-auth-token` | Terraform, igual que los anteriores | No: al componer el entorno (T017), ElastiCache lo leerá del secreto con un recurso efímero y lo escribirá con `auth_token_wo` | Subir a la vez `rotation["redis-auth-token"]` y `redis_auth_token_version` del módulo de datos. |
+| `redis-auth-token` | Terraform, igual que los anteriores | No: el módulo raíz lo lee del secreto con un recurso efímero, y ElastiCache lo recibe con `auth_token_wo` | Subir a la vez `rotation["redis-auth-token"]` y `redis_auth_token_version` del módulo de datos. |
 | `youtube-api-key` | Una persona, con `aws secretsmanager put-secret-value` | No: Terraform solo crea el secreto, sin valor | Volver a ejecutar `put-secret-value` y reiniciar las tareas de la API. |
 | Usuario maestro de RDS | RDS (`manage_master_user_password`) | No | Lo rota RDS. |
 | `cloudfront-origin-header` | Terraform, igual que los anteriores | **Sí**, en la configuración de CloudFront y en las reglas del ALB, que no tienen atributo de solo escritura | Subir su número en `rotation` y aplicar: el módulo de cómputo (las reglas del ALB) y el de borde (T014, el origen de CloudFront) lo leen del mismo secreto, y los dos lo reciben en el mismo `apply`. |
@@ -44,6 +44,26 @@ El CI corre lo mismo en el trabajo `infra` de cada PR que toca `src/infra/`.
 **El alfabeto de los secretos generados es un contrato:** solo letras, números y `-_` (`override_special`). El tiempo real pone el token de Redis en `REDIS_URL` sin escaparlo (ver «Cómputo»): cambiar el alfabeto rompería su conexión.
 
 **Al revisar un PR que toque `src/infra/`:** `terraform test` no ve recursos efímeros ni atributos de solo escritura. El trabajo `infra` del CI falla si encuentra en `modules/` un `resource "random_password"` (dejaría el valor en el estado) o un `secret_string =` (lo escribiría en claro).
+
+## Entornos (D13)
+
+`main.tf` es el módulo raíz de los dos entornos, `production` y `preproduction`. Cada uno tiene su estado (`environments/<entorno>.backend.hcl`) y su archivo de variables (`environments/<entorno>.tfvars`), que solo fija `environment`, `zone_id` e `image_tag`: la capacidad y la definición son las mismas, y lo que cambia sale de `environment` (el dominio, el catálogo falso, Mailpit, k6, SES solo en producción).
+
+```sh
+cd src/infra
+export TF_VAR_alert_email=…   # el correo de avisos: no se versiona
+terraform init -backend-config=environments/<entorno>.backend.hcl
+terraform plan -var-file=environments/<entorno>.tfvars -out=<entorno>.tfplan
+terraform apply <entorno>.tfplan
+```
+
+- **Lo que fija cada `.tfvars`:** `environment`, `zone_id` e `image_tag`, y los valores de operación de ese entorno: `data_policy_version` (producción, T026), y `canary_enabled` y `canary_establishment_code` una vez creado su establecimiento de prueba (T018). Nunca la capacidad: es la misma en los dos.
+- **Un entorno nuevo** se aplica con el canario parado (`canary_enabled = false`). El primer despliegue crea el establecimiento de prueba, y su `.tfvars` pasa a fijar `canary_enabled = true` y el código, para que un `apply` posterior no lo vuelva a parar (T018).
+- **Producción no se puede aplicar con la política en borrador:** el plan falla hasta que `production.tfvars` fije la versión definitiva (T026).
+- **La etiqueta `environment`** la ponen los dos proveedores con `default_tags`, pero no llega a lo que AWS crea por su cuenta: las interfaces de red de las tareas, el grupo de registros de la Lambda del canario, el secreto del usuario maestro de RDS y las tareas lanzadas con `run-task` sin `--propagate-tags`. La comprobación de que no queda nada al destruir la preproducción los busca aparte (T019).
+- **El orden** lo pone el módulo raíz: el cómputo y el borde esperan al módulo de secretos (`depends_on`), y el token de Redis se lee de su secreto con un recurso efímero y llega a ElastiCache por solo escritura.
+- **Las salidas** (`terraform output`) son lo que necesitan los flujos: el clúster y sus servicios, las familias de la migración y de k6, los repositorios, las subredes y el grupo de las tareas para `run-task`, el bucket de la SPA, la distribución, el almacén del mantenimiento y el canario.
+- **El primer `plan` de producción** no conoce todavía la identidad de SES: el permiso de envío y la política del tema dependen del entorno, no de la identidad, para poder planear.
 
 ## Cómputo (D1, D3, D8)
 
