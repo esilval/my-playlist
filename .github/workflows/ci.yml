@@ -257,13 +257,13 @@ jobs:
         run: |
           terraform init -backend=false -input=false -lockfile=readonly
           terraform test
-      # La función de CloudFront del borde (D1, D10): JavaScript de CloudFront Functions,
-      # probado con un `cf` simulado.
+      # La función de CloudFront del borde (D1, D10), con un `cf` simulado, y el guion del
+      # canario de disponibilidad (ADR-0020), con un `executeHttpStep` simulado.
       - uses: actions/setup-node@v4
         with:
           node-version-file: src/realtime/.nvmrc
-      - name: Función de CloudFront
-        run: node --test modules/edge/functions/edge.test.js
+      - name: Función de CloudFront y canario
+        run: node --test modules/edge/functions/edge.test.js modules/observability/canary/canary.test.js
 
   # El check obligatorio de main (protección de rama). Los demás trabajos se saltan
   # cuando no cambia su carpeta; un trabajo saltado cuenta como bueno, uno que falla o se

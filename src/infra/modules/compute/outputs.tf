@@ -40,3 +40,8 @@ output "mailpit_ports" {
   description = "Los puertos que el módulo de red abre entre las tareas en preproducción (D13)."
   value       = local.preproduction ? local.mailpit_ports : {}
 }
+
+output "target_group_arn_suffixes" {
+  description = "El sufijo del ARN de cada grupo de destino, para las alarmas de tareas sanas (D12, ADR-0020)."
+  value       = { for key, group in aws_lb_target_group.this : key => group.arn_suffix }
+}

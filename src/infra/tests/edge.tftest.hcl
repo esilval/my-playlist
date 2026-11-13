@@ -384,3 +384,22 @@ run "F004_R022_la_preproduccion_borra_el_bucket_de_la_spa" {
     error_message = "Destruir la preproducción vacía y borra su bucket (R022)."
   }
 }
+
+# T016 (R016): la parte de CloudFront. La del ALB está en compute.tftest.hcl, con el mismo nombre.
+run "F004_R016_sin_registros_de_acceso_del_alb_ni_de_cloudfront" {
+  command = apply
+
+  module {
+    source = "./modules/edge"
+  }
+
+  providers = {
+    aws           = aws
+    aws.us_east_1 = aws.us_east_1
+  }
+
+  assert {
+    condition     = length(aws_cloudfront_distribution.this.logging_config) == 0
+    error_message = "CloudFront no guarda registros de acceso: llevarían la cadena de consulta con el texto buscado (R016)."
+  }
+}

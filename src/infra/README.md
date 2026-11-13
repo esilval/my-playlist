@@ -89,6 +89,23 @@ Se usa DNS privado y no Service Connect porque Service Connect solo funciona ent
 - **Si falla el MX** del MAIL FROM, SES envía con el suyo por defecto: se pierde la alineación por SPF, pero DKIM mantiene DMARC.
 - **La salida del sandbox** la pide una persona, y hoy la bloquea la organización (ver «Requisitos previos manuales»).
 
+## Observabilidad (D12, ADR-0020)
+
+`modules/observability` crea, en us-east-2, los grupos de registros (30 días), el tema de avisos, 14 alarmas, el canario de disponibilidad, la regla de Contributor Insights, el panel y, solo en producción, el presupuesto.
+
+- **El tema de avisos** (`myplaylist-<entorno>-alerts`) envía un correo al responsable, que confirma la suscripción una vez (requisito previo 5). Su política deja publicar a CloudWatch y, en producción, a SES con la identidad del correo.
+- **El canario** (`myplaylist-prod` o `myplaylist-pre`) corre cada minuto `canary/canary.js`: `/api/health`, `/socket.io/health` y `/api/public/establishments/<código>` de un establecimiento de prueba (`canary_establishment_code`), que tiene que existir en el entorno. No guarda capturas, cabeceras ni cuerpos, y sus artefactos caducan a los 30 días. Se prueba con `node --test canary/canary.test.js`, que también corre en el CI. La versión del entorno de Synthetics está fijada (`canary_runtime_version`): hay que subirla cuando AWS la retire.
+- **SG3** salta si el canario falla durante 5 minutos o deja de dar datos, y si un grupo de destino del ALB se queda sin tareas sanas. La disponibilidad es la media de `SuccessPercent` del canario en el rango que se mira, arriba del panel: por defecto, los últimos 30 días; para el mes natural, se elige ese rango en el panel.
+- **El establecimiento de prueba tiene que existir antes de arrancar el canario.** Un entorno nuevo se aplica con `canary_enabled = false`: el canario no corre y las alarmas de SG3 no avisan, porque sin establecimiento ni tareas sanas avisarían sin motivo. El primer despliegue crea el establecimiento y después se aplica con `true` (T017, T018).
+- **SG6** avisa con la cifra, no con la IP: CloudWatch no pone la clave del contribuyente en el aviso. La IP está en la tabla «SG6 · rechazos por IP» del panel (R020).
+- **El grupo de registros de la Lambda del canario** (`/aws/lambda/cwsyn-…`) lo crea Synthetics en la primera ejecución, con un nombre que lleva el identificador del canario, y nace sin caducidad. Solo lleva el nombre y el resultado de cada paso, sin datos personales. Tras el primer `apply` se le pone la retención de 30 días: `aws logs put-retention-policy --log-group-name /aws/lambda/cwsyn-<nombre>-<id> --retention-in-days 30` (T018). Al destruir el canario se borran su Lambda y su capa (`delete_lambda`), pero no ese grupo: `preproduction.yml` lo borra al destruir la preproducción (T018).
+- **El zip del canario lo escribe `terraform plan`** en `modules/observability/.build/`: el `apply` tiene que correr en el mismo trabajo que el `plan`, o recibir esa carpeta (T018).
+- **`max_connections` de RDS** se toma como 400, la cifra aproximada de D4 para `db.t4g.medium`. Se confirma en la preproducción con `SHOW max_connections`, y se ajusta `database_max_connections` si difiere.
+- **Ninguna alarma usa métricas de Route 53 ni de CloudFront:** solo existen en us-east-1, donde la organización deniega CloudWatch (D18).
+- **El umbral acumulado de SG3** (más de 1,8 h de caída en el mes) no cabe en una alarma: se revisa en el panel cada semana.
+- **El presupuesto** (`myplaylist-mensual`) vigila toda la cuenta, así que solo lo crea producción. Avisa por correo cuando el gasto previsto del mes supera en un 20 % los US$510 estimados.
+- **El identificador de RDS** de la alarma de conexiones es el nombre del entorno, el mismo que usa el módulo de datos.
+
 ## Datos (D4)
 
 - **PostgreSQL:** RDS Multi-AZ con copias de 7 días. En producción tiene protección contra borrado, y al destruirse deja la instantánea `myplaylist-production-final`. Si producción se destruyera otra vez, antes hay que borrar o renombrar esa instantánea.

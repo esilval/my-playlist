@@ -2,7 +2,7 @@
 
 | Campo         | Valor |
 | ------------- | ----- |
-| Estado        | Approved · 42ff7185bb9b |
+| Estado        | Superseded by ADR-0020 |
 | Fecha         | 2026-11-09 |
 | Motivo        | Q3, Q1, Q4, Q5, Q6, Q7 |
 | Sustituye     | — |
