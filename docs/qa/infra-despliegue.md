@@ -15,9 +15,16 @@ desplegada y quién lo hizo.
 
 1. El arranque está aplicado (`src/infra/README.md`, «Arranque»), y los servidores de
    nombres de `200oklabs.com` apuntan a Route 53.
-2. Los entornos `production` y `preproduction` de GitHub existen, con un revisor y la
-   regla de despliegue que solo admite etiquetas `v*` (plan D17).
+2. Los entornos `production` y `preproduction` de GitHub existen, con un revisor, la
+   regla de despliegue que solo admite etiquetas `v*` (plan D17) y los secretos
+   `AWS_DEPLOY_ROLE_ARN` y `ALERT_EMAIL`. El proveedor OIDC de GitHub existe en la cuenta
+   (D18).
 3. La etiqueta que se va a desplegar existe, por ejemplo `v0.2.0-rc.1`.
+4. El entorno está creado: `infra.yml` con `accion=apply`, desde la etiqueta.
+5. **Tras el primer despliegue:** el responsable registra desde la aplicación el
+   establecimiento de prueba del canario, apunta su código en el `.tfvars` del entorno
+   (`canary_enabled = true`, `canary_establishment_code`) y vuelve a lanzar `infra.yml`
+   con `accion=apply`.
 
 ## Casos
 
@@ -33,8 +40,8 @@ desplegada y quién lo hizo.
 
 ### F004_R002 Sin etiqueta o sin aprobación no se despliega
 
-1. Lanza `deploy.yml` desde una rama, sin etiqueta: se rechaza en el primer paso y nada
-   cambia.
+1. Lanza `deploy.yml` desde una rama, sin etiqueta, o desde una rama con `tag` de una
+   versión: se rechaza en el primer paso (`etiqueta`), antes de construir, y nada cambia.
 2. Lanza `deploy.yml` con una etiqueta y no lo apruebes: espera, y lo que está en marcha
    no cambia.
 

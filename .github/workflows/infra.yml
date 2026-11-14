@@ -1,0 +1,138 @@
+# La infraestructura de un entorno (feature 004, plan D9, D16, ADR-0016, ADR-0017): el plan y
+# el apply en el mismo trabajo, dentro del entorno protegido de GitHub, que espera a un
+# revisor y solo admite etiquetas v*. El plan escribe el zip del canario que usa el apply
+# (T016). preproduction.yml lo reutiliza para crear y destruir la preproducción (T019).
+name: Infraestructura
+
+on:
+  workflow_dispatch:
+    inputs:
+      entorno:
+        description: "Entorno"
+        required: true
+        type: choice
+        options: [production, preproduction]
+      accion:
+        description: "plan solo muestra los cambios; destroy solo existe en preproducción"
+        required: true
+        type: choice
+        options: [plan, apply, destroy]
+        default: plan
+  workflow_call:
+    inputs:
+      entorno:
+        required: true
+        type: string
+      accion:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-${{ inputs.entorno }}
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.entorno }}
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: src/infra
+    env:
+      ENTORNO: ${{ inputs.entorno }}
+      ACCION: ${{ inputs.accion }}
+      # El correo de avisos no se versiona: es un secreto del entorno de GitHub.
+      TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+      TF_IN_AUTOMATION: "1"
+    steps:
+      - name: Acción permitida
+        working-directory: .
+        run: |
+          case "$ENTORNO/$ACCION" in
+            production/plan|production/apply|preproduction/plan|preproduction/apply|preproduction/destroy) ;;
+            production/destroy) echo "Producción no se destruye desde un flujo." >&2; exit 1 ;;
+            *) echo "Combinación desconocida: $ENTORNO/$ACCION" >&2; exit 1 ;;
+          esac
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-2
+          # Crear o destruir la preproducción tarda de 30 a 40 minutos (D13).
+          role-duration-seconds: 7200
+      - id: terraform-version
+        run: echo "version=$(cat .terraform-version)" >> "$GITHUB_OUTPUT"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ steps.terraform-version.outputs.version }}
+          terraform_wrapper: false
+      - name: terraform init
+        run: terraform init -input=false -lockfile=readonly -backend-config="environments/$ENTORNO.backend.hcl"
+
+      # El nombre del canario, antes de destruirlo: su grupo de registros lo borra este flujo
+      # después (R022).
+      - name: Canario antes de destruir
+        if: inputs.accion == 'destroy'
+        id: canary
+        run: echo "name=$(terraform output -raw canary_name 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
+
+      - name: terraform plan
+        run: |
+          mode=()
+          [ "$ACCION" = destroy ] && mode=(-destroy)
+          terraform plan -input=false "${mode[@]}" -var-file="environments/$ENTORNO.tfvars" -out=entorno.tfplan
+          {
+            echo "### terraform plan: $ENTORNO ($ACCION)"
+            echo '```'
+            terraform show -no-color entorno.tfplan | tail -n 200
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: terraform apply
+        if: inputs.accion != 'plan'
+        run: terraform apply -input=false entorno.tfplan
+
+      # Synthetics crea el grupo de registros de la Lambda del canario sin caducidad, en su
+      # primera ejecución: se le pone la de 30 días de todos los grupos (D12, R016).
+      # Si el canario corre y el grupo todavía no existe, se espera a su primera ejecución
+      # (corre cada minuto) y falla si no aparece.
+      - name: Retención del grupo de registros del canario
+        if: inputs.accion == 'apply'
+        run: |
+          canary=$(terraform output -raw canary_name)
+          prefix="/aws/lambda/cwsyn-$canary-"
+          groups=""
+          for _ in $(seq 1 20); do
+            # Se relee en cada vuelta: justo tras arrancarlo puede estar todavía en STARTING.
+            state=$(aws synthetics get-canary --name "$canary" --query 'Canary.Status.State' --output text)
+            groups=$(aws logs describe-log-groups --log-group-name-prefix "$prefix" --query 'logGroups[].logGroupName' --output text)
+            if [ -n "$groups" ] || { [ "$state" != "RUNNING" ] && [ "$state" != "STARTING" ]; }; then break; fi
+            sleep 30
+          done
+          if [ -z "$groups" ]; then
+            if [ "$state" = "RUNNING" ] || [ "$state" = "STARTING" ]; then
+              echo "El canario corre, pero su grupo de registros no apareció en 10 minutos." >&2; exit 1
+            fi
+            echo "El canario está $state: su grupo aparecerá cuando arranque, en el siguiente apply."
+          fi
+          for group in $groups; do
+            aws logs put-retention-policy --log-group-name "$group" --retention-in-days 30
+            echo "$group: 30 días"
+          done
+
+      # Synthetics no lo borra con la Lambda, y no lleva la etiqueta environment (R022).
+      - name: Borrar el grupo de registros del canario
+        if: inputs.accion == 'destroy' && steps.canary.outputs.name != ''
+        env:
+          CANARY: ${{ steps.canary.outputs.name }}
+        run: |
+          for group in $(aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/cwsyn-$CANARY-" --query 'logGroups[].logGroupName' --output text); do
+            aws logs delete-log-group --log-group-name "$group"
+            echo "$group: borrado"
+          done

@@ -19,8 +19,8 @@ locals {
     for environment in var.deploy_environments :
     "repo:${var.github_repository}:environment:${environment}"
   ]
-  # El rol de plan lo asumen los PR de este repositorio, para comentar el plan (D16).
-  plan_subjects = ["repo:${var.github_repository}:pull_request"]
+  # Ningún PR asume un rol de esta cuenta: el plan se hace en el entorno protegido, junto
+  # al apply, porque leería secretos que un PR no debe ver (D16).
 
   deploy_trust = {
     Version = "2012-10-17"
@@ -32,21 +32,6 @@ locals {
         StringEquals = {
           "${local.oidc_host}:aud" = "sts.amazonaws.com"
           "${local.oidc_host}:sub" = local.deploy_subjects
-        }
-      }
-    }]
-  }
-
-  plan_trust = {
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Federated = local.github_oidc_provider_arn }
-      Action    = "sts:AssumeRoleWithWebIdentity"
-      Condition = {
-        StringEquals = {
-          "${local.oidc_host}:aud" = "sts.amazonaws.com"
-          "${local.oidc_host}:sub" = local.plan_subjects
         }
       }
     }]
@@ -74,40 +59,4 @@ resource "aws_iam_role" "deploy" {
 resource "aws_iam_role_policy_attachment" "deploy_admin" {
   role       = aws_iam_role.deploy.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
-}
-
-# Plan: solo lectura de la cuenta, más lo justo del estado (leerlo y tomar el bloqueo).
-resource "aws_iam_role" "plan" {
-  name                 = "myplaylist-github-plan"
-  description          = "terraform plan en los PR, de solo lectura (D16)"
-  assume_role_policy   = jsonencode(local.plan_trust)
-  max_session_duration = 3600
-}
-
-resource "aws_iam_role_policy_attachment" "plan_read_only" {
-  role       = aws_iam_role.plan.name
-  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
-}
-
-resource "aws_iam_role_policy" "plan_state" {
-  name = "terraform-state"
-  role = aws_iam_role.plan.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid      = "LeerElEstado"
-        Effect   = "Allow"
-        Action   = ["s3:ListBucket", "s3:GetObject"]
-        Resource = [aws_s3_bucket.state.arn, "${aws_s3_bucket.state.arn}/*"]
-      },
-      {
-        # El bloqueo nativo de S3 escribe y borra un archivo .tflock junto al estado.
-        Sid      = "BloqueoDelEstado"
-        Effect   = "Allow"
-        Action   = ["s3:PutObject", "s3:DeleteObject"]
-        Resource = "${aws_s3_bucket.state.arn}/*.tflock"
-      },
-    ]
-  })
 }
