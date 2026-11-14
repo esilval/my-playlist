@@ -55,37 +55,21 @@ run "F004_R002_el_rol_de_despliegue_solo_se_asume_desde_los_entornos_de_este_rep
   }
 }
 
-run "F004_R002_el_rol_de_plan_es_de_solo_lectura" {
+run "F004_R002_ningun_pr_asume_un_rol_de_la_cuenta" {
   command = apply
 
   module {
     source = "./bootstrap"
   }
 
+  # El plan se hace en el entorno protegido, con el apply: un PR leería secretos (D16).
   assert {
-    condition     = aws_iam_role_policy_attachment.plan_read_only.policy_arn == "arn:aws:iam::aws:policy/ReadOnlyAccess"
-    error_message = "El rol de plan solo puede tener la política de solo lectura."
-  }
-
-  assert {
-    condition     = jsondecode(aws_iam_role.plan.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == ["repo:esilval/my-playlist:pull_request"]
-    error_message = "El rol de plan solo lo asumen los PR de este repositorio."
-  }
-
-  # Sobre el estado solo lee, salvo el archivo de bloqueo: cualquier acción que no sea de
-  # lectura tiene que ir, y solo, contra `*.tflock`, sea cual sea su Sid.
-  assert {
-    condition = alltrue([
-      for statement in jsondecode(aws_iam_role_policy.plan_state.policy).Statement :
-      statement.Effect == "Allow" && (
-        length(setsubtract(toset(flatten([statement.Action])), toset(["s3:ListBucket", "s3:GetObject"]))) == 0 ||
-        (
-          length(setsubtract(toset(flatten([statement.Action])), toset(["s3:PutObject", "s3:DeleteObject"]))) == 0 &&
-          toset(flatten([statement.Resource])) == toset(["arn:aws:s3:::myplaylist-200oklabs-terraform-state/*.tflock"])
-        )
-      )
-    ])
-    error_message = "El rol de plan solo puede leer el estado y escribir su archivo de bloqueo."
+    condition = (
+      aws_iam_role.deploy.name == "myplaylist-github-deploy" &&
+      !strcontains(aws_iam_role.deploy.assume_role_policy, "pull_request") &&
+      length(flatten([for path in fileset("bootstrap", "*.tf") : regexall("(?m)^resource \"aws_iam_role\" ", file("bootstrap/${path}"))])) == 1
+    )
+    error_message = "El único rol que asume GitHub es el de despliegue, y solo desde los entornos protegidos (R002, D16)."
   }
 }
 
@@ -107,10 +91,10 @@ run "F004_R002_sin_crear_el_proveedor_oidc_los_roles_lo_referencian_por_su_arn" 
 
   assert {
     condition = alltrue([
-      for policy in [aws_iam_role.deploy.assume_role_policy, aws_iam_role.plan.assume_role_policy] :
+      for policy in [aws_iam_role.deploy.assume_role_policy] :
       jsondecode(policy).Statement[0].Principal.Federated == "arn:aws:iam::955519187424:oidc-provider/token.actions.githubusercontent.com"
     ])
-    error_message = "Los dos roles confían en el proveedor OIDC de GitHub de la cuenta, por su ARN fijo."
+    error_message = "El rol de despliegue confía en el proveedor OIDC de GitHub de la cuenta, por su ARN fijo."
   }
 }
 

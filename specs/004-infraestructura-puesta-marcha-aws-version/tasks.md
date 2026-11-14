@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-11-09  |
-| Estado | Approved · c982d8ff8cf9       |
+| Estado | Approved · 47ab9beeb4b3       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -203,7 +203,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 - **Hecho cuando:**
   - Pasan:
     - `run "F004_R002_el_rol_de_despliegue_solo_se_asume_desde_los_entornos_de_este_repositorio"`;
-    - `run "F004_R002_el_rol_de_plan_es_de_solo_lectura"`;
+    - `run "F004_R002_ningun_pr_asume_un_rol_de_la_cuenta"` (el rol de plan se retiró en T018, D16);
     - `run "F004_R002_sin_crear_el_proveedor_oidc_los_roles_lo_referencian_por_su_arn"`, con `create_github_oidc_provider = false` (D18).
   - El proveedor por defecto del arranque es us-east-2, y el bucket del estado está en esa región (ADR-0019, D18).
   - El trabajo `infra` del CI corre `terraform fmt -check`, `validate` y `test` y está en `ci`.
@@ -396,7 +396,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 ### T018 — Flujos de despliegue e infraestructura, y primer despliegue en preproducción
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R001, R002, R004, R006
 - **Depende de:** T001, T002, T003, T004, T005, T006, T007, T008, T017
 - **Archivos:**
@@ -404,14 +404,16 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `.github/workflows/infra.yml`
   - `.github/workflows/ci.yml` (actionlint)
   - `docs/qa/infra-despliegue.md`
+  - `src/infra/README.md` (la sección «Flujos», los requisitos previos y los roles)
+  - `src/infra/bootstrap/{github,outputs}.tf` y `src/infra/tests/bootstrap.tftest.hcl`: se retira el rol de plan (D16)
 - **Hecho cuando:**
   - actionlint pasa en el CI.
   - Tras el primer `apply` de un entorno, `infra.yml` pone 30 días de retención al grupo de registros de la Lambda del canario (`/aws/lambda/cwsyn-…`), que Synthetics crea sin caducidad (D12).
-  - El primer despliegue de un entorno crea su establecimiento de prueba, con el código de `canary_establishment_code`, y después arranca el canario (`canary_enabled = true`).
+  - Tras el primer despliegue de un entorno, el responsable registra desde la aplicación su establecimiento de prueba, apunta su código en el `.tfvars` (`canary_establishment_code`, `canary_enabled = true`) y vuelve a lanzar `infra.yml` con `accion=apply`, que arranca el canario. El runner no puede leer Mailpit ni un buzón real para verificar la cuenta.
   - `infra.yml` hace el `plan` y el `apply` en el mismo trabajo, porque el `plan` escribe el zip del canario en `modules/observability/.build/` (T016).
   - Al destruir la preproducción, el flujo borra también el grupo de registros `/aws/lambda/cwsyn-…` de su canario, que Synthetics no borra con la Lambda y no lleva la etiqueta `environment` (R022).
   - `deploy.yml` registra cada definición de tarea nueva a partir de la última revisión de su familia, cambiando solo la imagen; nunca a partir de la que registró Terraform, que lleva la etiqueta inicial (T013).
-  - **El usuario** crea los entornos de GitHub con revisor y la regla de etiquetas `v*` (D17).
+  - **El usuario** crea los entornos de GitHub con revisor, la regla de etiquetas `v*` y los secretos `AWS_DEPLOY_ROLE_ARN` y `ALERT_EMAIL` (D17), y vuelve a aplicar el arranque para borrar el rol de plan.
   - Tras etiquetar `v0.2.0-rc.1`, quedan con resultado en `docs/qa/infra-despliegue.md`, todos contra la preproducción:
     - `F004_R001`: despliegue aprobado, con la etiqueta, quién aprobó y la hora en GitHub;
     - `F004_R002`: el lanzamiento desde una rama se rechaza, y el de una etiqueta espera la aprobación;

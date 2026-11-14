@@ -22,8 +22,3 @@ output "github_oidc_provider_arn" {
   description = "Proveedor OIDC de GitHub que usan los roles: el que hay que crear si no lo crea este arranque (D18)."
   value       = local.github_oidc_provider_arn
 }
-
-output "plan_role_arn" {
-  description = "Rol que asume el plan de los PR (variable AWS_PLAN_ROLE_ARN del repositorio)."
-  value       = aws_iam_role.plan.arn
-}

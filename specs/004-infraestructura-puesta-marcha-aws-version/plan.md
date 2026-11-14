@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-11-09         |
-| Estado | Approved · 0ae51de49be5              |
+| Estado | Approved · f9ca55fe6b2e              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -58,7 +58,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | ADR-0014: ticket de tiempo real | `REALTIME_TICKET_SECRET` está en Secrets Manager y es el mismo para la API, el trabajador y C6 (D6). |
 | ADR-0015: varios procesos | `API_WORKERS` es igual a las vCPU de la tarea (2). Las conexiones caben en `max_connections` de RDS (D3, D4). |
 | ADR-0016: Terraform | `src/infra/`, con un estado por entorno y `terraform test` en el CI. Su consecuencia sobre las contraseñas en el estado no se da: los secretos generados son efímeros y de solo escritura, y solo queda la cabecera de CloudFront (D6). |
-| ADR-0017: GitHub Actions con aprobación y OIDC | `deploy.yml`, `preproduction.yml` y `maintenance.yml` (D9, D13, D14). |
+| ADR-0017: GitHub Actions con aprobación y OIDC | `deploy.yml`, `infra.yml`, `preproduction.yml` y `maintenance.yml`, todos en el entorno protegido (D9, D13, D16). Ningún PR asume un rol de la cuenta. |
 | ADR-0020 (sustituye a ADR-0018): CloudWatch en us-east-2 y un canario | Registros JSON con EMF, un canario de CloudWatch Synthetics cada minuto, alarmas del ALB, alarmas con SNS y Contributor Insights, todo en us-east-2 (D11, D12). |
 | S1: capas | Las métricas de la aplicación pasan por un puerto `Metrics` del dominio compartido, que implementa la infraestructura (D11). |
 | S5: la difusión solo escucha | C6 solo añade métricas de lo que reenvía. La API añade `published_at` a los eventos, sin cambiar su significado (D11). |
@@ -209,7 +209,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
   - Parameter Store SecureString: más barato, pero sin rotación ni integración con el usuario maestro gestionado de RDS.
   - Variables de entorno en claro en la definición de tarea: se ven en la consola y en la API de ECS.
 - **Consecuencias:**
-  - **Los secretos generados no quedan en el estado de Terraform:** son efímeros y se escriben con atributos de solo escritura, también el token de Redis (`auth_token_wo`). Hace falta, porque el rol de plan lee el estado y lo puede asumir el flujo de cualquier PR de una rama de este repositorio (D16).
+  - **Los secretos generados no quedan en el estado de Terraform:** son efímeros y se escriben con atributos de solo escritura, también el token de Redis (`auth_token_wo`). Hace falta, porque el estado lo leen los flujos y cualquiera con acceso al bucket (D16).
   - **Excepción, la cabecera de CloudFront:** la configuración del origen de CloudFront y la regla del ALB no tienen atributo de solo escritura, así que su valor queda en el estado. Se acepta: si se filtrara, permitiría llegar al ALB sin pasar por CloudFront, pero no da acceso a ningún dato. Se rota igual que los demás, con `rotation`, y CloudFront y el ALB la reciben en el mismo `apply`. Pero la regla del ALB cambia en segundos y el origen de CloudFront tarda de 5 a 15 minutos en propagarse: mientras tanto, `/api/*` y `/socket.io/*` responden 403. Por eso se rota fuera de las horas de servicio. Una rotación sin corte, con la regla admitiendo los dos valores en dos pasos, queda como mejora posterior. `src/infra/README.md` lista qué queda en el estado (T012).
   - **ADR-0016** dice que el estado guarda las contraseñas que genera Terraform. Con esta decisión no las guarda: solo queda la cabecera. La protección del bucket que pide el ADR se mantiene igual.
   - **El CI lo vigila:** el trabajo `infra` falla si encuentra en `modules/` un `resource "random_password"` o un `secret_string =`, porque `terraform test` no ve los valores efímeros ni los de solo escritura (D16).
@@ -246,21 +246,25 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 ### D9 — El flujo de despliegue
 
 - **Decisión:** `.github/workflows/deploy.yml` (ADR-0017).
-  - **Disparo:** `push` de una etiqueta `v*.*.*` y `workflow_dispatch` con la etiqueta como entrada. Una referencia que no sea una etiqueta `v*` se rechaza en el primer paso, y el entorno `production` solo admite etiquetas `v*` (R002).
-  - **Construcción (sin aprobación):** imágenes de la API y de C6 etiquetadas con la versión y el SHA, subidas a ECR con etiquetas inmutables. La SPA se compila con `npm ci && npm run build`. Las imágenes se construyen con BuildKit y caché, sin secretos en los argumentos.
-  - **Despliegue, en el entorno `production` (espera la aprobación):**
-    1. asumir el rol de despliegue con OIDC;
-    2. la tarea de migración (D8);
-    3. registrar las definiciones de tarea nuevas con la imagen de la versión y actualizar `realtime`, `api` y `worker`, en ese orden, esperando a que cada uno quede estable;
-    4. publicar la SPA en S3 (`index.html` sin caché y los archivos con hash con caché larga) e invalidar CloudFront;
-    5. la comprobación posterior: `GET /api/health` y `GET /health` por el dominio público.
+  - **Disparo:** `push` de una etiqueta `v*.*.*` (contra producción) y `workflow_dispatch` con la etiqueta y el entorno, lanzado desde esa misma etiqueta. Una referencia que no sea esa etiqueta `v*` se rechaza en el primer paso, antes de construir, y los entornos solo admiten etiquetas `v*` (R002). `preproduction.yml` lo reutiliza con `workflow_call`.
+  - **Construcción (sin aprobación ni credenciales de AWS):** imágenes de la API y de C6 y la SPA (`npm ci && npm run build`), desde el commit de la etiqueta, con BuildKit y caché y sin secretos en los argumentos. Se guardan como artefactos del flujo: el rol de despliegue solo lo asume un trabajo que corre en un entorno protegido (D17), así que la construcción no puede subir a ECR.
+  - **Despliegue, en el entorno (espera la aprobación):**
+    1. asumir el rol de despliegue con OIDC, y leer los nombres del entorno de su estado (`terraform output`);
+    2. subir las imágenes a ECR, con etiquetas inmutables (la versión y el SHA de su commit). Si la versión ya está, por un despliegue anterior, se usa la que hay (R001);
+    3. la tarea de migración (D8), esperando su código de salida;
+    4. registrar las definiciones de tarea nuevas a partir de la última revisión de cada familia, cambiando solo la imagen, y actualizar `realtime`, `api` y `worker`, en ese orden, esperando a que cada uno quede estable en la revisión nueva;
+    5. publicar la SPA en S3 (`index.html` sin caché y los archivos con hash con caché larga) e invalidar CloudFront;
+    6. la comprobación posterior: `GET /api/health` y `GET /socket.io/health` por el dominio público.
+  - **Si algo falla:** el flujo muestra el motivo de parada de la tarea y sus últimas líneas de registro, donde la aplicación nombra la variable que falla, sin su valor (R005, R007).
   - **Registro:** GitHub registra el despliegue con la etiqueta, quién lo aprobó y la hora (R001).
-  - **Infraestructura:** su cambio no va en este flujo. Un PR que toca `src/infra/` muestra `terraform plan`, y `terraform apply` va en `infra.yml`, con la misma aprobación.
+  - **Infraestructura:** su cambio no va en este flujo: va en `infra.yml`, con la misma aprobación (D16).
 - **Alternativas descartadas:**
   - Desplegar la infraestructura y la aplicación en el mismo `apply`: cada versión pasaría por un plan de toda la infraestructura, y un cambio de red podría ir mezclado con una versión.
   - Desplegar desde `main` en cada merge: la constitución pide aprobación y una versión.
 - **Consecuencias:**
   - El procedimiento de emergencia sin GitHub (los mismos pasos con la CLI de AWS) queda en `src/infra/README.md`.
+  - Subir una etiqueta `-rc` que solo es para la preproducción lanza también un despliegue en producción, que se rechaza en la aprobación.
+  - Si un servicio vuelve atrás, los anteriores ya quedaron en la versión nueva: se corrige desplegando la etiqueta anterior.
   - Una versión solo se publica con `/release:approve` cuando la feature tiene todas sus tareas cerradas, y algunas pruebas de esta feature exigen producción: el correo real, los dispositivos y el despliegue con aprobación. Así que, dentro de la feature, se despliega en producción una **versión candidata**, `v0.2.0-rc.N`, que la regla `v*` admite. Al cerrar la feature y aprobar la 0.2.0, la etiqueta `v0.2.0` se pone en el mismo commit y se despliega igual, como paso de la puesta en marcha de `operations/v0.2.0.md`.
 
 ### D10 — Retirada y vuelta: una función de CloudFront y servicios a cero
@@ -447,10 +451,11 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
 - **Decisión:**
   - **Trabajo `infra` en `ci.yml`:** con el filtro `src/infra/**`, ejecuta `terraform fmt -check`, `terraform validate` y `terraform test`. Se añade a `ci`.
-  - **Comentario en el PR:** `infra.yml` comenta en el PR el `terraform plan` de producción, con un rol de solo lectura por OIDC.
+  - **Sin plan contra AWS en los PR:** el plan de un entorno tendría que leer el token de Redis (recurso efímero) y la cabecera de CloudFront, y un rol que lo permitiera los expondría a cualquier PR. El plan real se hace en `infra.yml`, en el entorno protegido y en el mismo trabajo que el `apply` (el `plan` escribe el zip del canario, D12), y queda en el resumen de la ejecución. `infra.yml` también destruye la preproducción, y nunca producción.
   - **Versiones fijas:** Terraform en `src/infra/.terraform-version`, y los proveedores en `.terraform.lock.hcl`, que se versiona.
 - **Alternativas descartadas:** Terraform Cloud para planes y estado. Es otro servicio y otra cuenta, cuando el estado ya vive en S3 (ADR-0016).
-- **Consecuencias:** el rol de plan lee la configuración de la cuenta y el estado completo, y lo puede asumir el flujo de cualquier PR de una rama de este repositorio. Por eso el estado no guarda los secretos generados (D6). Lo que queda en él, como ARN, nombres y direcciones, no da acceso por sí solo.
+- **Alternativas descartadas:** un rol de plan para los PR, que lea solo la cabecera y use un token de Redis de relleno: conserva la vista del plan en el PR, pero añade un caso especial al módulo raíz y da a cualquier PR la lectura de todo el estado.
+- **Consecuencias:** ningún PR asume un rol de la cuenta; el rol de plan del arranque se retira. Un revisor ve el plan en la ejecución de `infra.yml`, después de aprobarla: con `accion=plan`, no cambia nada. El estado sigue sin guardar los secretos generados (D6).
 
 ### D17 — Arranque único y requisitos previos manuales
 
@@ -458,7 +463,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
   - el bucket del estado;
   - la zona de Route 53 de `200oklabs.com`;
   - el proveedor OIDC de GitHub, si la organización de AWS lo permite (D18);
-  - los roles de despliegue y de plan, limitados a este repositorio y sus entornos.
+  - el rol de despliegue, limitado a los entornos protegidos de este repositorio. Cada entorno de GitHub lleva los secretos `AWS_DEPLOY_ROLE_ARN` y `ALERT_EMAIL` (D12).
 
   Lo que no se puede automatizar queda como lista en `src/infra/README.md`:
   1. delegar los servidores de nombres del registrador a Route 53;
@@ -497,7 +502,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
 | Componente | Cambio | Requisitos que cubre |
 | ---------- | ------ | -------------------- |
-| `src/infra/bootstrap/` | Bucket del estado en us-east-2, zona de Route 53, proveedor OIDC (opcional, D18) y roles de despliegue y de plan (D17) | R001, R002 |
+| `src/infra/bootstrap/` | Bucket del estado en us-east-2, zona de Route 53, proveedor OIDC (opcional, D18) y el rol de despliegue (D17) | R001, R002 |
 | `src/infra/modules/network` | VPC, subredes en dos zonas y grupos de seguridad (D2); en preproducción, los puertos de Mailpit (SMTP y su API) entre las tareas (D13) | R009, R022 |
 | `src/infra/modules/edge` | CloudFront, el certificado del dominio público (us-east-1), el origen del ALB por HTTPS, los alias de Route 53, el bucket de la SPA, la función `edge` (rutas de la SPA y mantenimiento), el KeyValueStore y la política que reenvía `CloudFront-Viewer-Address` (D1, D10, D11) | R003, R014, R015, R020 |
 | `src/infra/modules/data` | RDS Multi-AZ con sus copias y ElastiCache con réplica (D4) | R009, R010 |
@@ -679,7 +684,7 @@ classDiagram
 | Requisito | Tipo de prueba | Dónde vive |
 | --------- | -------------- | ---------- |
 | R001 | entorno: despliegue de `v0.2.0` con aprobación y registro; repetición desde otro equipo | `docs/qa/infra-despliegue.md` |
-| R002 | entorno: lanzar `deploy.yml` desde una rama y sin aprobación; prueba del plan: la confianza del rol de despliegue y la del de plan | `docs/qa/infra-despliegue.md`, `src/infra/tests/bootstrap.tftest.hcl` |
+| R002 | entorno: lanzar `deploy.yml` desde una rama y sin aprobación; prueba del plan: la confianza del rol de despliegue, y que ningún PR asume un rol | `docs/qa/infra-despliegue.md`, `src/infra/tests/bootstrap.tftest.hcl` |
 | R003 | plan: `redirect-to-https`, TLS 1.2, certificado, sin respuestas de error personalizadas, y CloudFront habla con el ALB por HTTPS y el ALB solo escucha en 443; unitaria: la función `edge` reescribe solo las rutas de la SPA; entorno: `curl` por HTTP y por HTTPS | `src/infra/tests/edge.tftest.hcl`, `src/infra/tests/compute.tftest.hcl`, `src/infra/modules/edge/functions/edge.test.js`, `docs/qa/infra-despliegue.md` |
 | R004 | unitaria: el mando de producción de la imagen no migra; entorno: una sola migración en los registros, la revisión de la cabeza y la primera migración en una base RDS nueva | `src/backend/tests/unit/test_dockerfile.py`, `docs/qa/infra-despliegue.md` |
 | R005 | entorno (preproducción): una migración que falla a propósito y una versión sin comprobación de salud | `docs/qa/infra-resiliencia.md` |

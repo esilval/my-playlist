@@ -1,0 +1,321 @@
+# Despliegue de una versión etiquetada (feature 004, plan D8, D9, ADR-0017). Construye sin
+# aprobación; sube las imágenes y despliega en el entorno protegido de GitHub, que espera a
+# un revisor y solo admite etiquetas v* (R001, R002). preproduction.yml lo reutiliza (T019).
+name: Desplegar
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Etiqueta que se despliega, p. ej. v0.2.0-rc.1"
+        required: true
+        type: string
+      entorno:
+        description: "Entorno"
+        required: true
+        type: choice
+        options: [production, preproduction]
+        default: production
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      entorno:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.entorno || 'production' }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  ENTORNO: ${{ inputs.entorno || 'production' }}
+  AWS_REGION: us-east-2
+
+jobs:
+  # Una referencia que no sea una etiqueta v* se rechaza aquí, antes de construir nada (R002).
+  etiqueta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      entorno: ${{ steps.check.outputs.entorno }}
+      domain: ${{ steps.check.outputs.domain }}
+    steps:
+      - name: Solo una etiqueta v* y un entorno conocido
+        id: check
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          # Se lanza desde la misma etiqueta que se despliega, nunca desde una rama: así el
+          # flujo y el código son los de esa versión, y la regla del entorno no lo rechaza
+          # cuando ya se construyó (R002).
+          if [ "$REF_TYPE" != "tag" ] || [ "$REF_NAME" != "$TAG" ]; then
+            echo "Solo se despliega una etiqueta, lanzando el flujo desde ella (ref: $REF_TYPE $REF_NAME, etiqueta: $TAG)." >&2
+            exit 1
+          fi
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$'; then
+            echo "«$TAG» no es una etiqueta de versión (v1.2.3 o v1.2.3-rc.4)." >&2; exit 1
+          fi
+          case "$ENTORNO" in
+            production) domain=myplaylist.200oklabs.com ;;
+            preproduction) domain=pre.myplaylist.200oklabs.com ;;
+            *) echo "Entorno desconocido: $ENTORNO" >&2; exit 1 ;;
+          esac
+          {
+            echo "tag=$TAG"
+            echo "entorno=$ENTORNO"
+            echo "domain=$domain"
+          } >> "$GITHUB_OUTPUT"
+      # La etiqueta tiene que existir en el repositorio: se despliega su commit, no una rama.
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ steps.check.outputs.tag }}
+
+  # Sin aprobación ni credenciales de AWS: las imágenes y la SPA salen del commit de la
+  # etiqueta y se guardan como artefactos. Sin secretos en los argumentos (R006).
+  construir:
+    needs: etiqueta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.etiqueta.outputs.tag }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Imagen del monolito
+        uses: docker/build-push-action@v6
+        with:
+          context: src/backend
+          outputs: type=docker,dest=${{ runner.temp }}/api.tar
+          provenance: false
+          tags: myplaylist-api:${{ needs.etiqueta.outputs.tag }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+      - name: Imagen del tiempo real
+        uses: docker/build-push-action@v6
+        with:
+          context: src/realtime
+          outputs: type=docker,dest=${{ runner.temp }}/realtime.tar
+          provenance: false
+          tags: myplaylist-realtime:${{ needs.etiqueta.outputs.tag }}
+          cache-from: type=gha,scope=realtime
+          cache-to: type=gha,scope=realtime,mode=max
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: src/web/.nvmrc
+          cache: npm
+          cache-dependency-path: src/web/package-lock.json
+      - name: SPA
+        working-directory: src/web
+        run: npm ci && npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imagenes
+          path: |
+            ${{ runner.temp }}/api.tar
+            ${{ runner.temp }}/realtime.tar
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spa
+          path: src/web/dist
+          retention-days: 1
+
+  # En el entorno protegido: espera la aprobación, y GitHub registra la etiqueta, quién
+  # aprobó y la hora (R001).
+  desplegar:
+    needs: [etiqueta, construir]
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ needs.etiqueta.outputs.entorno }}
+      url: https://${{ needs.etiqueta.outputs.domain }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ needs.etiqueta.outputs.tag }}
+      ENTORNO: ${{ needs.etiqueta.outputs.entorno }}
+      DOMAIN: ${{ needs.etiqueta.outputs.domain }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.etiqueta.outputs.tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/artefactos
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 3600
+      - id: terraform-version
+        run: echo "version=$(cat src/infra/.terraform-version)" >> "$GITHUB_OUTPUT"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ steps.terraform-version.outputs.version }}
+          terraform_wrapper: false
+      # Los nombres del entorno (clúster, familias, repositorios, red) salen de su estado.
+      - name: Salidas del entorno
+        working-directory: src/infra
+        run: |
+          terraform init -input=false -lockfile=readonly -backend-config="environments/$ENTORNO.backend.hcl" >/dev/null
+          terraform output -json > "$RUNNER_TEMP/salidas.json"
+
+      # Etiquetas inmutables (R001): si la etiqueta ya está en ECR, por un despliegue anterior
+      # de la misma versión, se usa la que hay.
+      - name: Subir las imágenes a ECR
+        run: |
+          # El commit de la etiqueta, no el del ref que lanzó el flujo (D9).
+          sha=$(git rev-parse --short=12 HEAD)
+          registry=$(jq -r '.repository_urls.value.api' "$RUNNER_TEMP/salidas.json" | cut -d/ -f1)
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
+          for image in api realtime; do
+            repository=$(jq -r ".repository_urls.value.\"$image\"" "$RUNNER_TEMP/salidas.json")
+            if aws ecr describe-images --repository-name "${repository#*/}" --image-ids imageTag="$TAG" >/dev/null 2>&1; then
+              echo "$repository:$TAG ya existe: se usa la que hay."
+              continue
+            fi
+            docker load --input "$RUNNER_TEMP/artefactos/imagenes/$image.tar"
+            docker tag "myplaylist-$image:$TAG" "$repository:$TAG"
+            docker tag "myplaylist-$image:$TAG" "$repository:$TAG-$sha"
+            docker push "$repository:$TAG"
+            docker push "$repository:$TAG-$sha"
+          done
+
+      # Cada definición nueva parte de la última revisión de su familia y cambia solo la
+      # imagen: nunca de la que registró Terraform, con la etiqueta inicial (T013).
+      - name: Preparar el registro de definiciones de tarea
+        run: |
+          cat > "$RUNNER_TEMP/registrar.sh" <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          family=$1 image=$2
+          aws ecs describe-task-definition --task-definition "$family" --include TAGS > "$RUNNER_TEMP/actual.json"
+          jq --arg image "$image" '
+            .taskDefinition
+            | .containerDefinitions[0].image = $image
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities,
+                  .registeredAt, .registeredBy, .deregisteredAt)
+          ' "$RUNNER_TEMP/actual.json" > "$RUNNER_TEMP/nueva.json"
+          tags=$(jq -c '.tags // []' "$RUNNER_TEMP/actual.json")
+          if [ "$tags" != "[]" ]; then
+            jq --argjson tags "$tags" '. + {tags: $tags}' "$RUNNER_TEMP/nueva.json" > "$RUNNER_TEMP/nueva-con-etiquetas.json"
+            mv "$RUNNER_TEMP/nueva-con-etiquetas.json" "$RUNNER_TEMP/nueva.json"
+          fi
+          aws ecs register-task-definition --cli-input-json "file://$RUNNER_TEMP/nueva.json" \
+            --query taskDefinition.taskDefinitionArn --output text
+          SCRIPT
+          chmod +x "$RUNNER_TEMP/registrar.sh"
+
+          # Por qué paró una tarea y sus últimas líneas de registro: la aplicación escribe ahí
+          # qué variable falla, sin su valor (R007, R016).
+          cat > "$RUNNER_TEMP/motivo.sh" <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          cluster=$1 task=$2
+          aws ecs describe-tasks --cluster "$cluster" --tasks "$task" --query 'tasks[0]' > "$RUNNER_TEMP/parada.json"
+          echo "Motivo: $(jq -r '.stoppedReason' "$RUNNER_TEMP/parada.json")" >&2
+          definition=$(jq -r '.taskDefinitionArn' "$RUNNER_TEMP/parada.json")
+          container=$(jq -r '.containers[0].name' "$RUNNER_TEMP/parada.json")
+          options=$(aws ecs describe-task-definition --task-definition "$definition" \
+            --query 'taskDefinition.containerDefinitions[0].logConfiguration.options')
+          stream="$(jq -r '."awslogs-stream-prefix"' <<<"$options")/$container/${task##*/}"
+          echo "Últimas líneas de $stream:" >&2
+          aws logs get-log-events --log-group-name "$(jq -r '."awslogs-group"' <<<"$options")" \
+            --log-stream-name "$stream" --limit 20 --no-start-from-head \
+            --query 'events[].message' --output text >&2 || true
+          SCRIPT
+          chmod +x "$RUNNER_TEMP/motivo.sh"
+
+      # Una sola migración, antes de tocar los servicios (R004, D8). Si falla, los servicios
+      # siguen con su revisión anterior (R005).
+      - name: Migrar la base de datos
+        run: |
+          out() { jq -r ".$1.value" "$RUNNER_TEMP/salidas.json"; }
+          cluster=$(out cluster_name)
+          api_repository=$(jq -r '.repository_urls.value.api' "$RUNNER_TEMP/salidas.json")
+          definition=$("$RUNNER_TEMP/registrar.sh" "$(out migration_task_definition)" "$api_repository:$TAG")
+          subnets=$(jq -r '.public_subnet_ids.value | join(",")' "$RUNNER_TEMP/salidas.json")
+          # startedBy solo admite letras, números, «-», «/» y «_».
+          aws ecs run-task --cluster "$cluster" --task-definition "$definition" \
+            --launch-type FARGATE --started-by "deploy-${TAG//./-}" --propagate-tags TASK_DEFINITION \
+            --network-configuration "awsvpcConfiguration={subnets=[$subnets],securityGroups=[$(out tasks_security_group_id)],assignPublicIp=ENABLED}" \
+            > "$RUNNER_TEMP/migracion-lanzada.json"
+          task=$(jq -r '.tasks[0].taskArn // empty' "$RUNNER_TEMP/migracion-lanzada.json")
+          if [ -z "$task" ]; then
+            echo "ECS no lanzó la migración: $(jq -c '.failures' "$RUNNER_TEMP/migracion-lanzada.json")" >&2
+            exit 1
+          fi
+          echo "Migración: $task"
+          # El waiter se rinde a los 10 minutos: se espera hasta 30, por si la migración es larga.
+          for _ in 1 2 3; do
+            aws ecs wait tasks-stopped --cluster "$cluster" --tasks "$task" && break
+          done
+          code=$(aws ecs describe-tasks --cluster "$cluster" --tasks "$task" --query 'tasks[0].containers[0].exitCode' --output text)
+          if [ "$code" != "0" ]; then
+            echo "La migración terminó con $code; los servicios siguen con su revisión anterior." >&2
+            "$RUNNER_TEMP/motivo.sh" "$cluster" "$task"
+            exit 1
+          fi
+
+      # En orden, esperando a que cada uno quede estable. Si el circuit breaker vuelve a la
+      # revisión anterior, el despliegue falla y dice por qué (R005, R007).
+      - name: Actualizar los servicios
+        run: |
+          cluster=$(jq -r '.cluster_name.value' "$RUNNER_TEMP/salidas.json")
+          for service in $(jq -r '.service_names.value[]' "$RUNNER_TEMP/salidas.json"); do
+            repository=$(jq -r ".repository_urls.value.\"$([ "$service" = realtime ] && echo realtime || echo api)\"" "$RUNNER_TEMP/salidas.json")
+            definition=$("$RUNNER_TEMP/registrar.sh" "$cluster-$service" "$repository:$TAG")
+            aws ecs update-service --cluster "$cluster" --service "$service" --task-definition "$definition" >/dev/null
+            echo "$service → $definition"
+            # El waiter se rinde a los 10 minutos: se espera hasta 30 a que el despliegue acabe,
+            # bien (COMPLETED) o vuelto atrás (FAILED).
+            for _ in 1 2 3; do
+              aws ecs wait services-stable --cluster "$cluster" --services "$service" || true
+              primary=$(aws ecs describe-services --cluster "$cluster" --services "$service" \
+                --query "services[0].deployments[?status=='PRIMARY'] | [0]")
+              [ "$(jq -r '.rolloutState' <<<"$primary")" != "IN_PROGRESS" ] && break
+            done
+            if [ "$(jq -r '.taskDefinition' <<<"$primary")" != "$definition" ] || [ "$(jq -r '.rolloutState' <<<"$primary")" != "COMPLETED" ]; then
+              echo "$service no quedó en la revisión nueva ($(jq -r '.rolloutStateReason' <<<"$primary"))." >&2
+              # La última tarea parada de la revisión nueva: la lista de ECS no viene ordenada.
+              stopped=$(aws ecs list-tasks --cluster "$cluster" --service-name "$service" --desired-status STOPPED --max-items 100 --query 'taskArns' --output json)
+              if [ "$(jq length <<<"$stopped")" -gt 0 ]; then
+                mapfile -t stopped_tasks < <(jq -r '.[]' <<<"$stopped")
+                last=$(aws ecs describe-tasks --cluster "$cluster" --tasks "${stopped_tasks[@]}" \
+                  --query "tasks[?taskDefinitionArn=='$definition' && stoppedAt != null] | sort_by(@, &stoppedAt)[-1].taskArn" --output text)
+                if [ -n "$last" ] && [ "$last" != "None" ]; then
+                  "$RUNNER_TEMP/motivo.sh" "$cluster" "$last"
+                fi
+              fi
+              exit 1
+            fi
+          done
+
+      # index.html sin caché, para que cada visita vea la versión nueva; los archivos con
+      # hash, con caché larga (D9).
+      - name: Publicar la SPA
+        run: |
+          bucket=$(jq -r '.spa_bucket.value' "$RUNNER_TEMP/salidas.json")
+          spa="$RUNNER_TEMP/artefactos/spa"
+          aws s3 sync "$spa/assets" "s3://$bucket/assets" --cache-control "public, max-age=31536000, immutable"
+          aws s3 sync "$spa" "s3://$bucket" --exclude "assets/*" --exclude "index.html" --cache-control "public, max-age=300"
+          aws s3 cp "$spa/index.html" "s3://$bucket/index.html" --cache-control "no-cache"
+          distribution=$(jq -r '.distribution_id.value' "$RUNNER_TEMP/salidas.json")
+          invalidation=$(aws cloudfront create-invalidation --distribution-id "$distribution" --paths "/index.html" "/" \
+            --query 'Invalidation.Id' --output text)
+          aws cloudfront wait invalidation-completed --distribution-id "$distribution" --id "$invalidation"
+
+      - name: Comprobar el servicio por el dominio público
+        run: |
+          for path in /api/health /socket.io/health; do
+            curl --fail --silent --show-error --retry 10 --retry-delay 6 --retry-all-errors "https://$DOMAIN$path"
+            echo " ← $path"
+          done

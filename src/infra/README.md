@@ -65,6 +65,32 @@ terraform apply <entorno>.tfplan
 - **Las salidas** (`terraform output`) son lo que necesitan los flujos: el clúster y sus servicios, las familias de la migración y de k6, los repositorios, las subredes y el grupo de las tareas para `run-task`, el bucket de la SPA, la distribución, el almacén del mantenimiento y el canario.
 - **El primer `plan` de producción** no conoce todavía la identidad de SES: el permiso de envío y la política del tema dependen del entorno, no de la identidad, para poder planear.
 
+## Flujos (D9, D16)
+
+Los dos corren desde una etiqueta `v*`, porque los entornos de GitHub solo la admiten, y esperan la aprobación de un revisor antes de tocar AWS.
+
+- **`infra.yml`** (`entorno`, `accion`: `plan`, `apply` o `destroy`, este solo en preproducción) hace el `plan` y el `apply` en el mismo trabajo, porque el `plan` escribe el zip del canario. El plan queda en el resumen de la ejecución. Tras un `apply`, pone 30 días de retención al grupo de registros de la Lambda del canario; tras un `destroy`, lo borra.
+- **`deploy.yml`** (al subir una etiqueta, o a mano con `tag` y `entorno`):
+  1. construye las imágenes y la SPA sin aprobación ni credenciales;
+  2. en el entorno: sube las imágenes a ECR (si la etiqueta ya está, usa la que hay);
+  3. lanza la migración y espera su código de salida;
+  4. actualiza `realtime`, `api` y `worker`, en ese orden, cada uno a partir de la última revisión de su familia, y falla si el circuit breaker vuelve atrás;
+  5. publica la SPA e invalida CloudFront;
+  6. comprueba `/api/health` y `/socket.io/health` por el dominio público.
+- **El primer despliegue de un entorno:**
+  1. `infra.yml apply`, con el canario parado;
+  2. `deploy.yml`;
+  3. el responsable registra a mano, desde la aplicación, el establecimiento de prueba del canario y apunta su código en el `.tfvars` (`canary_enabled = true` y `canary_establishment_code`);
+  4. `infra.yml apply` otra vez.
+
+  La preproducción, que se crea y se destruye con cada prueba de carga, deja el canario parado salvo cuando se prueban sus alarmas (T022).
+
+  Entre el primer `apply` y el primer despliegue, los servicios no arrancan: su imagen aún no está en ECR, y sin la migración no existen los roles `app_*`. No avisa nadie, porque con el canario parado tampoco avisan las alarmas de tareas sanas.
+- **Se lanzan desde la etiqueta,** nunca desde una rama: `deploy.yml` lo comprueba en su primer paso (R002).
+- **Subir una etiqueta lanza `deploy.yml` contra producción,** también una `-rc` (D9). Si la etiqueta es solo para la preproducción, esa ejecución se rechaza en la aprobación.
+- **Si un servicio vuelve atrás,** el despliegue para, pero los anteriores ya quedaron en la versión nueva: `realtime` se actualiza antes que `api`. Se corrige desplegando la etiqueta anterior.
+- **Si la migración o un servicio fallan,** el registro del flujo muestra el motivo de parada de la tarea y sus últimas líneas de registro, donde la aplicación nombra la variable que falla sin su valor (R007).
+
 ## Cómputo (D1, D3, D8)
 
 `modules/compute` crea los repositorios de ECR, el clúster de ECS con los servicios `api`, `worker` y `realtime`, la tarea de migración y el ALB.
@@ -215,9 +241,10 @@ Lo que no se puede automatizar, en este orden:
 5. **Confirmar la suscripción a los avisos**: el correo que envía SNS al responsable de
    operación (T016).
 6. **Crear los entornos de GitHub** `production` y `preproduction`, con un revisor y la
-   regla de despliegue que solo admite etiquetas `v*` (T018). Cada uno lleva el secreto
-   `AWS_DEPLOY_ROLE_ARN` con el valor de `terraform output deploy_role_arn`. El repositorio
-   lleva la variable `AWS_PLAN_ROLE_ARN` con el de `plan_role_arn`.
+   regla de despliegue que solo admite etiquetas `v*` (T018). Cada uno lleva dos secretos:
+   `AWS_DEPLOY_ROLE_ARN`, con el valor de `terraform output deploy_role_arn`, y
+   `ALERT_EMAIL`, el correo del responsable de operación. Los PR no hacen `terraform plan`
+   contra AWS (D16).
 7. **Pedir a Google la ampliación de la cuota de YouTube**, si la prueba con usuarios lo
    exige (10 000 unidades al día; 100 por búsqueda sin caché).
 
@@ -257,9 +284,10 @@ igual: PR con el cambio y `terraform apply` a mano, con credenciales de administ
   entornos, en la misma cuenta: **relajar las reglas de `preproduction`** (por ejemplo,
   admitir ramas o quitar el revisor) **abre también producción**. Los dos entornos llevan
   siempre las mismas reglas.
-- **`myplaylist-github-plan`:** lo asumen los PR de este repositorio para comentar el
-  `terraform plan`. Puede leer la cuenta (`ReadOnlyAccess`) y el estado, y solo escribir
-  el archivo de bloqueo del estado.
+- **Ningún PR asume un rol.** El rol de plan de los PR (`myplaylist-github-plan`) se retiró
+  (D16): su plan tendría que leer el token de Redis y la cabecera de CloudFront, y el plan
+  se hace ahora en `infra.yml`, junto al apply. Para borrarlo de AWS, se vuelve a aplicar el
+  arranque una vez (`terraform -chdir=src/infra/bootstrap apply`).
 
 ## Coste
 
