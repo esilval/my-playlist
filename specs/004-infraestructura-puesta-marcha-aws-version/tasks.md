@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-11-09  |
-| Estado | Approved · 47ab9beeb4b3       |
+| Estado | Approved · 038c590cb1fc       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -23,7 +23,7 @@
 - `[ ]` pendiente · `[~]` en curso · `[x]` hecha
 - `P` marca tareas paralelizables (sin dependencias entre sí)
 
-Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017 escriben la infraestructura y se prueban con `terraform test`, sin AWS real. T018 a T024 la usan en AWS y dejan sus resultados en `docs/qa/`: necesitan la cuenta de AWS y, algunas, al usuario.
+Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017 escriben la infraestructura y se prueban con `terraform test`, sin AWS real. T018 a T024 la usan en AWS y dejan sus resultados en `docs/qa/`: necesitan la cuenta de AWS y, algunas, al usuario. T030 a T032 adaptan lo escrito a ADR-0021 y ADR-0022 (la cuenta propia, el perfil de piloto y las comprobaciones de Route 53), y van antes del primer despliegue (T018).
 
 ## Tareas
 
@@ -205,16 +205,15 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
     - `run "F004_R002_el_rol_de_despliegue_solo_se_asume_desde_los_entornos_de_este_repositorio"`;
     - `run "F004_R002_ningun_pr_asume_un_rol_de_la_cuenta"` (el rol de plan se retiró en T018, D16);
     - `run "F004_R002_sin_crear_el_proveedor_oidc_los_roles_lo_referencian_por_su_arn"`, con `create_github_oidc_provider = false` (D18).
-  - El proveedor por defecto del arranque es us-east-2, y el bucket del estado está en esa región (ADR-0019, D18).
+  - El proveedor por defecto del arranque es us-east-2, y el bucket del estado está en esa región (ADR-0021, D18).
   - El trabajo `infra` del CI corre `terraform fmt -check`, `validate` y `test` y está en `ci`.
   - Con `.sdd/config.json`, `sdd trace` (local y en la versión fijada en el CI) cuenta los ID de `.tftest.hcl` y de los títulos de `docs/qa/`. Si no los cuenta, se usa el comentario con el ID que prevé D15.
   - Los dos diagramas de `plan.md` se dibujan con la CLI de Mermaid sin errores.
   - `src/infra/README.md` recoge:
     - la lista de requisitos previos de D17;
-    - la comprobación previa de las políticas de la organización (D18), con su resultado;
-    - la petición del proveedor OIDC a quien administra la organización, con su fecha y su respuesta;
+    - la comprobación previa de las políticas de la organización (D18), con su resultado, y la petición a quien la administra. Es historia de la cuenta antigua: T032 la sustituye por la cuenta propia;
     - el coste comprobado con la API de precios de AWS (`aws pricing get-products`) en us-east-2. Si el total se aparta más de un 20 % del plan, se avisa al usuario.
-  - **El usuario,** con credenciales de administrador, aplica el arranque y delega los servidores de nombres de `200oklabs.com` a Route 53, y `dig NS 200oklabs.com` lo muestra. El proveedor OIDC puede llegar después: lo exige T018, no T009.
+  - **El usuario,** con credenciales de administrador, aplica el arranque **en la cuenta propia** (T032, D18), con el proveedor OIDC creado, y delega los servidores de nombres de `200oklabs.com` a su zona de Route 53. `dig NS 200oklabs.com` lo muestra.
 
 ### T010 — Red `P`
 
@@ -329,11 +328,12 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
   Los avisos no se reenvían por correo. En `compute.tftest.hcl`, `F004_R008_las_tareas_fijan_aws_region_us_east_2` comprueba el permiso de envío, y el caso de preproducción, que no hay ninguno.
 
-  **El usuario** pide la salida del sandbox de SES en us-east-2 (D14, ADR-0019), y la solicitud queda anotada en `src/infra/README.md` con su fecha. Hoy la deniega la organización (D18): hasta que el caso de soporte lo resuelva, la tarea queda en `[~]`.
+  **El usuario** pide la salida del sandbox de SES en us-east-2 en la cuenta propia (D14, D18, ADR-0021), y la solicitud queda anotada en `src/infra/README.md` con su fecha y su respuesta. En la cuenta antigua la denegaba la organización. Hasta que AWS la conceda, la tarea queda en `[~]`.
 
 ### T016 — Observabilidad: registros, alarmas, el canario y el presupuesto
 
 - **Estado:** `[x]`
+- **Nota:** ADR-0022 retira el canario. T030 lo sustituye por las comprobaciones de Route 53, junto con sus pruebas `F004_R013_…`. Lo demás de esta tarea sigue vigente.
 - **Requisitos:** R008, R011, R012, R013, R016, R020, R021
 - **Depende de:** T013, T014
 - **Archivos:**
@@ -398,7 +398,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
 
 - **Estado:** `[~]`
 - **Requisitos:** R001, R002, R004, R006
-- **Depende de:** T001, T002, T003, T004, T005, T006, T007, T008, T017
+- **Depende de:** T001, T002, T003, T004, T005, T006, T007, T008, T017, T030, T031, T032
 - **Archivos:**
   - `.github/workflows/deploy.yml`
   - `.github/workflows/infra.yml`
@@ -408,10 +408,8 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `src/infra/bootstrap/{github,outputs}.tf` y `src/infra/tests/bootstrap.tftest.hcl`: se retira el rol de plan (D16)
 - **Hecho cuando:**
   - actionlint pasa en el CI.
-  - Tras el primer `apply` de un entorno, `infra.yml` pone 30 días de retención al grupo de registros de la Lambda del canario (`/aws/lambda/cwsyn-…`), que Synthetics crea sin caducidad (D12).
-  - Tras el primer despliegue de un entorno, el responsable registra desde la aplicación su establecimiento de prueba, apunta su código en el `.tfvars` (`canary_establishment_code`, `canary_enabled = true`) y vuelve a lanzar `infra.yml` con `accion=apply`, que arranca el canario. El runner no puede leer Mailpit ni un buzón real para verificar la cuenta.
-  - `infra.yml` hace el `plan` y el `apply` en el mismo trabajo, porque el `plan` escribe el zip del canario en `modules/observability/.build/` (T016).
-  - Al destruir la preproducción, el flujo borra también el grupo de registros `/aws/lambda/cwsyn-…` de su canario, que Synthetics no borra con la Lambda y no lleva la etiqueta `environment` (R022).
+  - Tras el primer despliegue de un entorno, el responsable registra desde la aplicación su establecimiento de prueba, apunta su código en el `.tfvars` (`availability_establishment_code`, `availability_check_enabled = true`, T030) y vuelve a lanzar `infra.yml` con `accion=apply`, que crea las comprobaciones de Route 53. El runner no puede leer Mailpit ni un buzón real para verificar la cuenta.
+  - `infra.yml` hace el `plan` y el `apply` en el mismo trabajo, y aplica el plan que acaba de mostrar (D16). Los pasos del grupo de registros del canario los retira T030.
   - `deploy.yml` registra cada definición de tarea nueva a partir de la última revisión de su familia, cambiando solo la imagen; nunca a partir de la que registró Terraform, que lleva la etiqueta inicial (T013).
   - **El usuario** crea los entornos de GitHub con revisor, la regla de etiquetas `v*` y los secretos `AWS_DEPLOY_ROLE_ARN` y `ALERT_EMAIL` (D17), y vuelve a aplicar el arranque para borrar el rol de plan.
   - Tras etiquetar `v0.2.0-rc.1`, quedan con resultado en `docs/qa/infra-despliegue.md`, todos contra la preproducción:
@@ -434,7 +432,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `accion=levantar` deja la preproducción en marcha con la etiqueta desplegada, y `accion=destruir` la destruye y comprueba que no queda nada.
   - `preproduction.yml`, con `accion=probar-carga` y `establishments=50`, crea la preproducción, despliega, corre k6 en Fargate y destruye. La imagen `grafana/k6` no trae el guion: el flujo se lo da a la tarea de T029, por ejemplo con una imagen propia que copie `src/perf/` sobre la misma versión. Con eso:
     - **`F004_R017`:** cumple la búsqueda p95 < 2 s, el estado p95 < 1 s y 0 errores 5xx. El resultado queda en la cabecera de `client.js` y en `docs/qa/infra-resiliencia.md`. Si no cumple, se detiene la tarea y se consulta al usuario: tamaño de las tareas, clase de RDS o enmienda.
-    - **`F004_R022`:** tras destruir, no queda ningún recurso con la etiqueta `environment=preproduction`, y producción no cambió. El mismo caso registra también la comprobación de `levantar` y `destruir`. La etiqueta no llega a lo que AWS crea por su cuenta, así que la comprobación busca además, por su nombre: las interfaces de red de las tareas, el grupo de registros de la Lambda del canario, el secreto del usuario maestro de RDS y las tareas de `run-task`, que se lanzan con `--propagate-tags TASK_DEFINITION` (T017).
+    - **`F004_R022`:** tras destruir, no queda ningún recurso con la etiqueta `environment=preproduction`, y producción no cambió. El mismo caso registra también la comprobación de `levantar` y `destruir`. La etiqueta no llega a lo que AWS crea por su cuenta, así que la comprobación busca además, por su nombre: las interfaces de red de las tareas, el secreto del usuario maestro de RDS y las tareas de `run-task`, que se lanzan con `--propagate-tags TASK_DEFINITION` (T017).
 
 ### T020 — Retirar y volver
 
@@ -552,7 +550,7 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `src/infra/environments/production.tfvars`
   - `src/backend/tests/unit/test_data_policy.py`
 - **Hecho cuando:**
-  - **El negocio** entrega el texto definitivo de la política de tratamiento. Debe incluir la transferencia internacional de datos a EE. UU. (ADR-0019) y la retención de 30 días de los registros con IP (R016).
+  - **El negocio** entrega el texto definitivo de la política de tratamiento. Debe incluir la transferencia internacional de datos a EE. UU. (ADR-0021) y la retención de 30 días de los registros con IP (R016).
   - El texto queda en `src/backend/app/accounts/policy/` con su versión, y `DATA_POLICY_VERSION` de producción la nombra.
   - Pasa `test_F004_R007_production_arranca_con_la_politica_definitiva_y_la_sirve`.
   - El borrador `0000-borrador` sigue sirviendo en local y en la preproducción.
@@ -591,31 +589,115 @@ Las tareas T001 a T008 cambian la aplicación y se prueban en local. T009 a T017
   - `run "F004_R022_produccion_no_tiene_mailpit_ni_k6"`;
   - `run "F004_R022_produccion_no_abre_el_puerto_smtp"`.
 
+### T030 — Disponibilidad con comprobaciones de Route 53 en lugar del canario
+
+- **Estado:** `[ ]`
+- **Requisitos:** R011, R012, R013, R016, R022
+- **Depende de:** T016, T017
+- **Archivos:**
+  - `src/infra/modules/observability/*.tf`; se borra `src/infra/modules/observability/canary/`
+  - `src/infra/main.tf` y `src/infra/variables.tf`:
+    - el proveedor `us_east_1` llega al módulo de observabilidad;
+    - `canary_enabled` y `canary_establishment_code` pasan a ser `availability_check_enabled` y `availability_establishment_code`;
+    - la salida `canary_name` se retira;
+    - se retira el proveedor `hashicorp/archive`.
+  - `src/infra/environments/*.tfvars`
+  - `src/infra/.terraform.lock.hcl` (sin `hashicorp/archive`) y `.gitignore` (sin el zip del canario)
+  - `src/infra/tests/observability.tftest.hcl` y `src/infra/tests/environments.tftest.hcl`
+  - `.github/workflows/ci.yml`: sin el `node --test` del canario
+  - `.github/workflows/infra.yml`: sin la retención ni el borrado del grupo de registros del canario
+  - `src/infra/README.md` (las secciones «Observabilidad» y «Flujos»)
+- **Hecho cuando:** pasan, en lugar de los casos del canario de T016 y T017:
+  - `run "F004_R013_tres_comprobaciones_de_route53_cada_30_s_por_https"`:
+    - `/api/health`, `/socket.io/health` y `/api/public/establishments/<código>` contra el dominio público;
+    - `HTTPS_STR_MATCH` con su cadena;
+    - SNI activado;
+    - `request_interval = 30` y `failure_threshold = 3` (D12, ADR-0022).
+  - `run "F004_R013_sg3_salta_si_una_comprobacion_falla_o_no_hay_datos"`:
+    - una alarma por comprobación sobre `HealthCheckStatus`, en us-east-1, con `treat_missing_data = breaching`;
+    - las de `HealthyHostCount` de los dos grupos de destino del ALB siguen en us-east-2.
+  - `run "F004_R012_sg3_avisa_al_tema_de_us_east_1_con_la_suscripcion_por_correo"`.
+  - `run "F004_R013_un_entorno_nuevo_arranca_sin_comprobaciones"` y `run "F004_R013_las_comprobaciones_no_arrancan_sin_establecimiento_de_prueba"`, en `environments.tftest.hcl`.
+  - `run "F004_R022_no_queda_ningun_recurso_del_canario"`: ni canario, ni su bucket, ni su rol, ni el proveedor `archive`.
+  - `run "F004_R011_el_panel_muestra_sg1_a_sg6_y_la_disponibilidad_del_mes"`: la disponibilidad pasa a ser la media de `HealthCheckPercentageHealthy`, con un widget en us-east-1.
+  - `run "F004_R016_todos_los_grupos_de_registros_guardan_30_dias"` sigue pasando sin el grupo del canario.
+  - actionlint pasa con los cambios de `ci.yml` e `infra.yml`.
+
+### T031 — Perfil de capacidad del piloto
+
+- **Estado:** `[ ]`
+- **Requisitos:** R009, R017, R022
+- **Depende de:** T013, T011, T017
+- **Archivos:**
+  - `src/infra/modules/compute/variables.tf`: `capacity`, y `api_workers` igual a las vCPU de la tarea de la API
+  - `src/infra/modules/data/variables.tf`: `db_instance_class` y `cache_node_type`
+  - `src/infra/modules/observability/variables.tf` y `src/infra/main.tf`: `database_max_connections`, ligado a la clase de RDS
+  - `src/infra/tests/compute.tftest.hcl`, `src/infra/tests/data.tftest.hcl`, `src/infra/tests/observability.tftest.hcl` y `src/infra/tests/environments.tftest.hcl`
+  - `src/infra/README.md` (las secciones «Cómputo», «Datos» y «Coste»)
+- **Hecho cuando:**
+  - Pasa `run "F004_R009_perfil_de_piloto_con_dos_tareas_en_dos_zonas"`:
+    - la API: 1 vCPU, 2 GiB, de 2 a 8 tareas;
+    - el tiempo real: 0,25 vCPU, 0,5 GiB, de 2 a 8 tareas;
+    - el trabajador: una tarea fija;
+    - `API_WORKERS=1`;
+    - todas las tareas en las subredes de las dos zonas (D3, ADR-0021).
+  - Pasa `run "F004_R009_rds_multi_az_t4g_small_y_redis_con_replica_t4g_micro"` (D4).
+  - Pasa `run "F004_R011_alarma_de_conexiones_al_80_por_ciento_de_190"`. Las conexiones máximas (8 × 1 × 15 + 15) quedan por debajo del umbral (D4).
+  - `run "F004_R022_preproduccion_y_produccion_tienen_la_misma_capacidad"` sigue pasando: los `.tfvars` no fijan la capacidad.
+  - El coste de `src/infra/README.md` se rehace con la API de precios en us-east-2. Si el total se aparta más de un 20 % de los ~US$265 del plan, se avisa al usuario.
+
+### T032 — La cuenta de AWS propia
+
+- **Estado:** `[ ]`
+- **Requisitos:** R002
+- **Depende de:** T009
+- **Archivos:**
+  - `src/infra/bootstrap/variables.tf`: `create_github_oidc_provider = true` por defecto
+  - `src/infra/tests/bootstrap.tftest.hcl`
+  - `src/infra/environments/*.backend.hcl`: el bucket del estado de la cuenta nueva
+  - `src/infra/README.md`:
+    - la sección «Lo que impone la organización de AWS» pasa a ser «La cuenta de AWS» (D18), con la historia de la cuenta antigua resumida;
+    - los requisitos previos de D17;
+    - el arranque
+- **Hecho cuando:**
+  - Pasa `run "F004_R002_el_arranque_crea_el_proveedor_oidc_por_defecto"`, y siguen pasando los tres casos de T009.
+  - **El usuario:**
+    - crea la cuenta, con MFA en la raíz y un usuario o rol de administración;
+    - comprueba que `aws organizations describe-organization` responde `AWSOrganizationsNotInUseException`;
+    - aplica el arranque;
+    - delega los servidores de nombres de `200oklabs.com` a la zona nueva (`dig NS 200oklabs.com` lo muestra);
+    - pide la salida del sandbox de SES (T015);
+    - revisa las cuotas de vCPU de Fargate (D17);
+    - pone en los entornos de GitHub el `AWS_DEPLOY_ROLE_ARN` de la cuenta nueva.
+
+    Las fechas quedan en `src/infra/README.md`.
+  - **La cuenta antigua:** el usuario destruye los recursos de su arranque y cierra el caso de soporte 179460898900807. La fecha queda en el README.
+
 ## Cobertura
 
 | Requisito | Tareas |
 | --------- | ------ |
 | R001 | T013, T018, T023, T025 |
-| R002 | T009, T018 |
+| R002 | T009, T018, T032 |
 | R003 | T013, T014, T023 |
 | R004 | T008, T013, T018 |
 | R005 | T013, T021 |
 | R006 | T008, T012, T013, T017, T018, T023 |
 | R007 | T001, T021, T026 |
 | R008 | T013, T015, T016, T017, T023, T028 |
-| R009 | T010, T011, T013, T014, T021 |
+| R009 | T010, T011, T013, T014, T021, T031 |
 | R010 | T011, T021 |
-| R011 | T002, T003, T004, T007, T016, T022 |
-| R012 | T016, T022 |
-| R013 | T007, T016, T022 |
+| R011 | T002, T003, T004, T007, T016, T022, T030 |
+| R012 | T016, T022, T030 |
+| R013 | T007, T016, T022, T030 |
 | R014 | T014, T020 |
 | R015 | T020 |
-| R016 | T003, T006, T008, T016, T022, T027 |
-| R017 | T019, T029 |
+| R016 | T003, T006, T008, T016, T022, T027, T030 |
+| R017 | T019, T029, T031 |
 | R018 | T024 |
 | R019 | T024 |
 | R020 | T003, T014, T016, T022 |
 | R021 | T005, T016, T022 |
-| R022 | T001, T011, T012, T014, T017, T019, T029 |
+| R022 | T001, T011, T012, T014, T017, T019, T029, T030, T031 |
 
 > Todo requisito MUST debe tener al menos una tarea.
