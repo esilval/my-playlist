@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-11-09         |
-| Estado | Approved · f9ca55fe6b2e              |
+| Estado | Approved · e57f034f8d48              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -14,9 +14,12 @@
 
 ## Resumen
 
-Se construye en AWS el entorno de ADR-0019 (us-east-2, que sustituye a las decisiones anteriores de región y de correo), definido con Terraform en `src/infra/` (ADR-0016). Lo forman CloudFront delante de todo en `myplaylist.200oklabs.com`, ECS Fargate para la API, el trabajador y el tiempo real, RDS PostgreSQL Multi-AZ, ElastiCache Redis y SES.
+Se construye el entorno de ADR-0021 en una cuenta de AWS propia, fuera de cualquier organización, en us-east-2, con un perfil de capacidad para el piloto. ADR-0021 sustituye a la decisión anterior, que lo adaptaba a la cuenta de una organización ajena (D18). Se define con Terraform en `src/infra/` (ADR-0016). Lo forman:
+- CloudFront delante de todo, en `myplaylist.200oklabs.com`;
+- ECS Fargate para la API, el trabajador y el tiempo real;
+- RDS PostgreSQL Multi-AZ, ElastiCache Redis y SES.
 
-El despliegue lo hace GitHub Actions desde una etiqueta, con aprobación y OIDC (ADR-0017). La observabilidad va en CloudWatch en us-east-2, con un canario de disponibilidad y alarmas por correo (ADR-0020, que sustituye a ADR-0018).
+El despliegue lo hace GitHub Actions desde una etiqueta, con aprobación y OIDC (ADR-0017). La observabilidad va en CloudWatch en us-east-2, con alarmas por correo. La disponibilidad desde fuera la miden comprobaciones de salud de Route 53, con su alarma en us-east-1 (ADR-0022, que sustituye al canario de CloudWatch Synthetics).
 
 La aplicación cambia en lo justo para medir las señales y proteger los registros: un registro por petición sin la cadena de consulta, métricas EMF y un modo `preproduction`. La versión que se pone en marcha es la 0.2.0, que incluye todo esto.
 
@@ -29,11 +32,11 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | Principio 1: la spec es la fuente de verdad | sí | La contradicción con la etiqueta `v0.1.0` se resolvió aclarando la spec antes de este plan. |
 | Principio 2: todo MUST con tarea, prueba y criterios | sí | Hay dos tipos de prueba. **Automáticas:** pytest, Vitest y `terraform test`. **De entorno:** las verificaciones que solo se pueden hacer contra AWS (despliegue, caídas, copias, alertas y retirada). Estas se documentan en `docs/qa/` con el ID `F004_R0xx`, y `.sdd/config.json` añade `docs/qa/*.md` a las pruebas que lee `sdd trace` (D15). |
 | Principio 3: aislamiento por establecimiento | sí | No se toca RLS. La API y el trabajador se conectan con usuarios propios, miembros de `app_api` y `app_worker`, sin `BYPASSRLS` ni permisos de migración (D5). |
-| Principio 4: datos mínimos y Ley 1581 | sí | Los registros no guardan el texto buscado, cookies, tokens ni contraseñas (D11). Todos los registros se conservan 30 días. La IP solo aparece en los rechazos 401 y 403 (R020). La transferencia a EE. UU. ya la anota ADR-0019. |
+| Principio 4: datos mínimos y Ley 1581 | sí | Los registros no guardan el texto buscado, cookies, tokens ni contraseñas (D11). Todos los registros se conservan 30 días. La IP solo aparece en los rechazos 401 y 403 (R020). La transferencia a EE. UU. la anota ADR-0021: el encargado sigue siendo AWS. |
 | Principio 5: sin instalación | sí | No cambia nada para los usuarios. |
-| Principio 7: decisiones transversales como ADR | sí | La herramienta de infraestructura, el camino de despliegue y la observabilidad se proponen como ADR-0016, ADR-0017 y ADR-0018. |
+| Principio 7: decisiones transversales como ADR | sí | La herramienta de infraestructura, el camino de despliegue y la observabilidad se proponen como ADR-0016 y ADR-0017. La cuenta y su capacidad, y la observabilidad, viven en ADR-0021 y ADR-0022. |
 | Principio 8: el código vive bajo `src/` | sí | La infraestructura vive en `src/infra/`. Los flujos van en `.github/workflows/` y las pruebas manuales en `docs/qa/`, como hasta ahora. |
-| Dependencias nuevas justificadas | sí | Terraform (ADR-0016), la imagen de k6 en Fargate para la prueba de carga (D13) y el proveedor `hashicorp/archive` de Terraform, que empaqueta el guion del canario (D12). En la aplicación no hay dependencias nuevas: el formato EMF se escribe a mano en JSON. |
+| Dependencias nuevas justificadas | sí | Terraform (ADR-0016), y la imagen de k6 en Fargate para la prueba de carga (D13). El proveedor `hashicorp/archive`, que empaquetaba el guion del canario, se retira con él (D12, ADR-0022). En la aplicación no hay dependencias nuevas: el formato EMF se escribe a mano en JSON. |
 | Secretos fuera del repositorio | sí | Los secretos viven en Secrets Manager y ECS los inyecta al arrancar cada tarea (D6). OIDC evita guardar claves de AWS en GitHub (ADR-0017). gitleaks sigue en el CI. |
 | La API y el trabajador nunca usan `BYPASSRLS` ni permisos de migración | sí | Solo la tarea de migración usa el usuario maestro de RDS. La API y el trabajador se conectan con `myplaylist_api` y `myplaylist_worker`, sin privilegios (D5). |
 | `ENV=production` no arranca sin SES ni con la política en borrador | sí | Se refuerza: la API se niega a arrancar si el remitente es de `example.com` o la URL pública no es HTTPS. El modo `preproduction` exige secretos propios, pero admite el catálogo falso y Mailpit (D7). |
@@ -49,17 +52,17 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 | ADR-0003: una SPA React con Vite | La SPA se compila con `vite build` y se sirve desde S3 a través de CloudFront (D1). |
 | ADR-0004: PostgreSQL y Redis | RDS PostgreSQL 16, la misma versión mayor del compose, y ElastiCache Redis OSS 7.1. Redis 7 o posterior es lo que pide `EXPIRE NX` (D4). |
 | ADR-0005: Socket.IO y pub/sub en Redis | El cliente usa solo WebSocket (`transports: ["websocket"]`), así que no hacen falta sesiones pegajosas en el ALB. Cada tarea de C6 se suscribe al canal y entrega a sus propias conexiones (D3). |
-| ADR-0019: AWS con contenedores y correo en us-east-2 | Toda la topología está en D1 a D4, en us-east-2. Hay al menos dos tareas por servicio, en dos zonas. El certificado de CloudFront va en us-east-1, con un proveedor de Terraform con alias (D18); el del origen del ALB, en us-east-2 (D1). |
+| ADR-0021: cuenta de AWS propia, us-east-2 y perfil de piloto | Toda la topología está en D1 a D4, en us-east-2, en la cuenta propia (D18). Hay al menos dos tareas por servicio que atiende peticiones, en dos zonas, con el mínimo del perfil de piloto y el autoescalado hasta la hora pico (D3, D4). El certificado de CloudFront y la alarma de SG3 van en us-east-1, con un proveedor de Terraform con alias (D12, D18); el certificado del origen del ALB, en us-east-2 (D1). |
 | ADR-0007: autenticación propia | Sin cambios. Las cookies `Secure` ya exigen HTTPS, que da CloudFront (D1). |
 | ADR-0009: RLS | Los usuarios de conexión no tienen `BYPASSRLS` (D5). |
 | ADR-0010: YouTube | Producción usa YouTube. La alarma de cuota (R021) cuenta las unidades que gasta cada llamada (D11). |
-| ADR-0019: correo con SES en us-east-2 | SES en us-east-2, con el dominio verificado, DKIM y un MAIL FROM propio. La aplicación usa us-east-2 por defecto y las tareas lo fijan con `AWS_REGION` (D14). |
+| ADR-0021: correo con SES en us-east-2 | SES en us-east-2, con el dominio verificado, DKIM y un MAIL FROM propio. La aplicación usa us-east-2 por defecto y las tareas lo fijan con `AWS_REGION` (D14). |
 | ADR-0013: código bajo `src/` | `src/infra/`. |
 | ADR-0014: ticket de tiempo real | `REALTIME_TICKET_SECRET` está en Secrets Manager y es el mismo para la API, el trabajador y C6 (D6). |
-| ADR-0015: varios procesos | `API_WORKERS` es igual a las vCPU de la tarea (2). Las conexiones caben en `max_connections` de RDS (D3, D4). |
+| ADR-0015: varios procesos | `API_WORKERS` es igual a las vCPU de la tarea: 1 en el perfil de piloto. Las conexiones caben en `max_connections` de RDS, porque el máximo de tareas de la API va ligado a la clase de RDS (D3, D4). |
 | ADR-0016: Terraform | `src/infra/`, con un estado por entorno y `terraform test` en el CI. Su consecuencia sobre las contraseñas en el estado no se da: los secretos generados son efímeros y de solo escritura, y solo queda la cabecera de CloudFront (D6). |
 | ADR-0017: GitHub Actions con aprobación y OIDC | `deploy.yml`, `infra.yml`, `preproduction.yml` y `maintenance.yml`, todos en el entorno protegido (D9, D13, D16). Ningún PR asume un rol de la cuenta. |
-| ADR-0020 (sustituye a ADR-0018): CloudWatch en us-east-2 y un canario | Registros JSON con EMF, un canario de CloudWatch Synthetics cada minuto, alarmas del ALB, alarmas con SNS y Contributor Insights, todo en us-east-2 (D11, D12). |
+| ADR-0022: CloudWatch en us-east-2 y comprobaciones de Route 53 | Registros JSON con EMF, alarmas del ALB, alarmas con SNS y Contributor Insights, en us-east-2. Tres comprobaciones de salud de Route 53 cada 30 s, con la alarma de SG3 y su tema de SNS en us-east-1 (D11, D12). |
 | S1: capas | Las métricas de la aplicación pasan por un puerto `Metrics` del dominio compartido, que implementa la infraestructura (D11). |
 | S5: la difusión solo escucha | C6 solo añade métricas de lo que reenvía. La API añade `published_at` a los eventos, sin cambiar su significado (D11). |
 | S6: los frontales no acceden a los almacenes | Sin cambios: la SPA sigue usando solo la API y el tiempo real, bajo el mismo origen. |
@@ -72,7 +75,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
 - **Contexto:** la SPA, la API y el tiempo real comparten origen en local (D9 de 001). La cookie de sesión es `SameSite=Lax`, la API comprueba `Origin` contra `PUBLIC_BASE_URL`, y la SPA abre Socket.IO contra `window.location.origin`. R003 pide solo HTTPS bajo el dominio.
 - **Decisión:**
-  - **Dirección:** `myplaylist.200oklabs.com` (la eligió el usuario), con una distribución de CloudFront, certificado de ACM en us-east-1 (CloudFront solo admite los de esa región; el resto del servicio está en us-east-2, ADR-0019) y registros alias en Route 53. Es la dirección que llevan los QR.
+  - **Dirección:** `myplaylist.200oklabs.com` (la eligió el usuario), con una distribución de CloudFront, certificado de ACM en us-east-1 (CloudFront solo admite los de esa región; el resto del servicio está en us-east-2, ADR-0021) y registros alias en Route 53. Es la dirección que llevan los QR.
   - **Rutas de CloudFront:**
     - `/api/*` va al ALB, al grupo de destino de la API, sin caché y reenviando cookies, cabeceras y la cadena de consulta;
     - `/socket.io/*` va al ALB, al grupo de destino de C6, sin caché y con WebSocket;
@@ -117,44 +120,59 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
 ### D3 — Servicios de ECS y su capacidad
 
-- **Contexto:** Q2 pide unas 870 peticiones por segundo en la hora pico (Q2 de 003). En local, cuatro procesos daban unas 600 peticiones por segundo con p95 de 95 ms, en un portátil compartido con PostgreSQL y k6 (D11 de 003). Q3 y ADR-0019 piden al menos dos tareas por servicio.
+- **Contexto:** Q2 pide unas 870 peticiones por segundo en la hora pico (Q2 de 003). En local, cuatro procesos daban unas 600 peticiones por segundo con p95 de 95 ms, en un portátil compartido con PostgreSQL y k6 (D11 de 003). Q3 y ADR-0021 piden al menos dos tareas por servicio que atiende peticiones, y ADR-0021 fija un perfil de piloto: un mínimo en reposo pequeño y el autoescalado hasta la hora pico.
 - **Decisión:** un clúster de ECS Fargate (x86_64), con cada servicio repartido en las dos zonas.
 
   | Servicio | Tarea | Tareas | Mando |
   | -------- | ----- | ------ | ----- |
-  | `api` | 2 vCPU, 4 GiB, `API_WORKERS=2` | 2 a 6, autoescalado al 60 % de CPU | `uvicorn … --workers 2 --no-access-log` |
-  | `worker` | 0,25 vCPU, 0,5 GiB | 2 fijas | `python -m app.worker` |
-  | `realtime` | 0,5 vCPU, 1 GiB | 2 a 4, autoescalado al 60 % de CPU | `sh -c 'export REDIS_URL="rediss://:${REDIS_AUTH_TOKEN}@${REDIS_HOST}:${REDIS_PORT}/0" && exec node dist/server.js'` (D6) |
+  | Servicio | Tarea | Tareas | Mando |
+  | -------- | ----- | ------ | ----- |
+  | `api` | 1 vCPU, 2 GiB, `API_WORKERS=1` | 2 a 8, autoescalado al 60 % de CPU | `uvicorn … --workers 1 --no-access-log` |
+  | `worker` | 0,25 vCPU, 0,5 GiB | 1 fija | `python -m app.worker` |
+  | `realtime` | 0,25 vCPU, 0,5 GiB | 2 a 8, autoescalado al 60 % de CPU | `sh -c 'export REDIS_URL="rediss://:${REDIS_AUTH_TOKEN}@${REDIS_HOST}:${REDIS_PORT}/0" && exec node dist/server.js'` (D6) |
 
+  - **Perfil de piloto (ADR-0021):**
+    - el mínimo en reposo es la mitad del que se aprobó primero (2 × 2 vCPU para la API);
+    - el máximo de la API (8 vCPU) y el del tiempo real (2 vCPU) quedan cerca de los anteriores (12 y 2 vCPU);
+    - los tamaños son los valores del módulo raíz, iguales en los dos entornos, porque los `.tfvars` nunca fijan la capacidad (R022, T017).
+  - **Una sola tarea del trabajador:**
+    - El trabajador no atiende peticiones: despacha el outbox de PostgreSQL (`app/shared/outbox.py`) y las tareas periódicas.
+    - Si se cae su tarea o su zona, ECS lo repone en la otra en uno o dos minutos. El trabajo pendiente sigue en la base de datos, así que solo se retrasa.
+    - R009 se cumple: se siguen atendiendo las peticiones y no se pierden datos confirmados.
   - **Comprobaciones de salud del ALB:** `/api/health` y `/health`. Hay que superar dos seguidas cada 10 s para recibir tráfico.
   - **Despliegues:** con el «deployment circuit breaker» y vuelta atrás automática. Si las tareas nuevas no superan su comprobación de salud, ECS vuelve a la revisión anterior (R005).
   - **Las migraciones no corren al arrancar la API,** como hacía el compose: van en una tarea aparte (D8).
-  - **El tamaño máximo lo fija la prueba de carga** en la preproducción (R017). Si 6 tareas no bastan, se sube el máximo y se recalculan las conexiones (D4).
+  - **El tamaño máximo lo fija la prueba de carga** en la preproducción (R017). Si 8 tareas no bastan, se sube el máximo junto con la clase de RDS, porque las conexiones van ligadas a ella (D4).
 - **Alternativas descartadas:**
   - Tareas de 4 vCPU: menos tareas, pero con dos el mínimo ya sería de 8 vCPU, el doble de coste en reposo.
+  - **Mantener el mínimo aprobado primero:** 2 × (2 vCPU, 4 GiB) para la API, 2 tareas del trabajador y 2 × (0,5 vCPU, 1 GiB) para el tiempo real. Cuesta unos US$90 al mes más por una hora pico que el piloto todavía no tiene (ADR-0021).
+  - **Una sola tarea de la API o del tiempo real:** ahorra unos US$45 más, pero rompe R009 y Q3.
   - Graviton (ARM64): un 20 % más barato, pero exige construir imágenes para ARM y comprobar las dependencias nativas (asyncpg, argon2-cffi). Queda como ahorro posterior.
   - Fargate Spot: puede quitar tareas con 2 minutos de aviso, lo que no casa con Q3.
 - **Consecuencias:**
-  - En reposo hay 4 vCPU para la API.
-  - El autoescalado tarda unos minutos en reaccionar: el arranque de la hora pico lo absorbe el mínimo de dos tareas.
+  - En reposo hay 2 vCPU para la API.
+  - El autoescalado tarda unos minutos en reaccionar: el arranque de la hora pico lo absorbe el mínimo de dos tareas. Con tareas de 1 vCPU, ese margen es la mitad que antes, y la prueba de carga (T019) mide si basta. Si no, se sube el mínimo o se programa una escala antes de la hora pico.
 
 ### D4 — Datos: RDS Multi-AZ y ElastiCache con réplica
 
 - **Decisión:**
-  - **RDS PostgreSQL 16, `db.t4g.medium` (4 GiB) Multi-AZ:**
+  - **RDS PostgreSQL 16, `db.t4g.small` (2 GiB) Multi-AZ,** en el perfil de piloto (ADR-0021):
     - almacenamiento gp3 de 20 GiB con autoescalado y cifrado;
     - copias automáticas de 7 días y restauración a cualquier momento (pérdida máxima de unos 5 minutos, R010);
     - protección contra borrado e instantánea final al destruirse, solo en producción;
     - el usuario maestro lo gestiona RDS en Secrets Manager.
   - **Conexiones:**
-    - la API llega como mucho a 6 tareas × 2 procesos × 15 = 180;
-    - el trabajador, a 2 × 15 = 30;
+    - la API llega como mucho a 8 tareas × 1 proceso × 15 = 120 (`POOL_SIZE` de `app/shared/db.py`);
+    - el trabajador, a 1 × 15 = 15;
     - la migración, a unas pocas.
 
-    El total, unas 215, queda por debajo del `max_connections` de esa instancia, unas 400. Una alarma avisa al 80 % (SG2).
-  - **ElastiCache Redis OSS 7.1, `cache.t4g.small`:** grupo de replicación con una réplica en la otra zona, conmutación automática por error, cifrado en tránsito y en reposo, y token de autenticación. La URL pasa a ser `rediss://…`; redis-py y el cliente de Node la admiten sin cambios.
+    El total, unas 140, queda por debajo del `max_connections` de esa instancia. RDS lo calcula con la memoria (`DBInstanceClassMemory / 9531392`), y salen unas 190, que se confirman en la preproducción. Una alarma avisa al 80 %, unas 150 (SG2).
+  - **El máximo de tareas de la API va ligado a la clase de RDS:** si la prueba de carga pide más de 8 tareas, se pasa a la vez a `db.t4g.medium` (unas 400 conexiones).
+  - **ElastiCache Redis OSS 7.1, `cache.t4g.micro` (0,5 GiB),** en el perfil de piloto: grupo de replicación con una réplica en la otra zona, conmutación automática por error, cifrado en tránsito y en reposo, y token de autenticación. La URL pasa a ser `rediss://…`; redis-py y el cliente de Node la admiten sin cambios.
 - **Alternativas descartadas:**
-  - Aurora PostgreSQL Serverless v2: escala sola, pero su mínimo de 0,5 ACU en dos zonas cuesta más que una `t4g.medium`, y no hace falta para 50 locales.
+  - Aurora PostgreSQL Serverless v2: escala sola, pero su mínimo de 0,5 ACU en dos zonas cuesta más que una `t4g.small`, y no hace falta para 50 locales.
+  - **`db.t4g.medium` y `cache.t4g.small` desde el principio,** lo que se aprobó primero: cuestan unos US$72 al mes más. Quedan como el siguiente escalón si la prueba de carga lo pide.
+  - **RDS en una sola zona:** cuesta la mitad, pero rompe R009 y Q3.
   - Una instancia de clase `m7g`: más estable bajo carga sostenida, pero cuesta unas 2,5 veces más. Si la prueba de carga agota los créditos de CPU de la `t4g`, se cambia (riesgo anotado).
   - Valkey en ElastiCache: más barato, pero ADR-0004 dice Redis. Cambiarlo es otra decisión.
 - **Consecuencias:**
@@ -304,7 +322,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
     - solo en las respuestas 401 y 403, la IP de quien la hace, para R020. Sale de la cabecera `CloudFront-Viewer-Address`, que CloudFront siempre pone y el cliente no puede falsear, y que una política de petición al origen reenvía en `/api/*` (D1). Nunca se toma de `X-Forwarded-For`, porque CloudFront añade la IP real al final de lo que ya traiga el cliente, y el primer valor lo controla quien hace la petición.
 
     No escribe cabeceras, cookies ni cuerpos. Uvicorn arranca con `--no-access-log` (R016).
-  - **Métricas EMF** en el espacio de nombres `MyPlaylist/<entorno>`, en la misma línea de registro. Solo llevan las dimensiones `Route` o `Service`; nunca el establecimiento ni el dispositivo (ADR-0020). Las de la API:
+  - **Métricas EMF** en el espacio de nombres `MyPlaylist/<entorno>`, en la misma línea de registro. Solo llevan las dimensiones `Route` o `Service`; nunca el establecimiento ni el dispositivo (ADR-0022). Las de la API:
     - `RequestLatency` (ms, por `Route`);
     - `SearchUnavailable`, cada `503 search_unavailable`;
     - `YouTubeQuotaUsed`: el total del día de la cuota, que se reinicia a medianoche de la hora del Pacífico. Es un contador de Redis `catalog:youtube-units:{día}`, al que el adaptador de YouTube suma lo que cuesta cada llamada: 100 por `search.list` y 1 por `videos.list`. Suma toda llamada con respuesta, también una de error, con su coste completo: Google cobra al menos 1 unidad por una petición inválida, así que puede sobrecontar, del lado seguro para la alarma. Una llamada sin respuesta no suma. Se emite con `count` y el valor es el total del día, no un incremento;
@@ -335,19 +353,26 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
 - **Decisión:**
   - **Tema de avisos:** un tema de SNS `myplaylist-<entorno>-alerts`, con la suscripción por correo del responsable de operación (variable de Terraform; la confirma una vez desde su buzón). Cada alarma envía un correo al entrar en `ALARM` y otro al volver a `OK` (R012). Una alarma de CloudWatch evalúa cada minuto, así que el aviso sale en el primer minuto tras cumplirse el umbral.
-  - **Un canario de CloudWatch Synthetics** en us-east-2, cada minuto (ADR-0020). Cada ejecución recorre tres pasos contra el dominio público, a través de CloudFront:
+  - **Tres comprobaciones de salud de Route 53** (ADR-0022), por HTTPS contra el dominio público y a través de CloudFront:
     - `https://myplaylist.200oklabs.com/api/health`;
-    - `/health` del tiempo real, que CloudFront encamina por `/socket.io/health`, una ruta que se añade a C6;
-    - la página pública de un establecimiento de prueba.
+    - `/health` del tiempo real, que CloudFront encamina por `/socket.io/health`, la ruta que T007 añadió a C6;
+    - `/api/public/establishments/<código>` de un establecimiento de prueba, con los datos que pinta su página pública. La ruta `/l/<código>` siempre devuelve el `index.html` de S3, así que no probaría nada del servicio.
 
-    Es un guion de Node con la versión del entorno de Synthetics fijada, que no guarda capturas, cabeceras ni cuerpos. Sus artefactos van a un bucket de S3 que caduca a los 30 días. La alarma de SG3 salta cuando falla durante 5 minutos, y trata la falta de datos como fallo.
-    - **El tercer paso** pide `/api/public/establishments/<código>`, los datos que pinta la página pública. La ruta `/l/<código>` siempre devuelve el `index.html` de S3, así que no probaría nada del servicio.
-    - **La disponibilidad del mes** es la media de `SuccessPercent` en todo el rango que se mira (`setPeriodToTimeRange`): el panel abre con los últimos 30 días, y para el mes natural se elige ese rango (R013).
-    - **El guion se empaqueta con el proveedor `hashicorp/archive`,** el oficial de HashiCorp, que solo corre al planear. Se descartaron versionar el zip, que se apartaría del guion sin que nadie lo notara, y que el CI lo construya y lo suba a S3, que añade un paso y un objeto con versión para un archivo de 80 líneas. La ruta del zip lleva el hash del guion, así que un cambio del guion actualiza el canario.
-    - **El establecimiento de prueba** tiene que existir antes de arrancar el canario: un entorno nuevo lo crea parado (`canary_enabled = false`) hasta el primer despliegue (T017, T018).
-    - **El grupo de registros de su Lambda** lo crea Synthetics en la primera ejecución, con un nombre que lleva el identificador del canario, y nace sin caducidad. Solo guarda el nombre y el resultado de cada paso. El flujo que aplica la infraestructura le pone después los 30 días (T018). Al destruir el canario se borran su Lambda y su capa (`delete_lambda`), que no llevan la etiqueta `environment` (R022).
-  - **Por qué no Route 53:** sus comprobaciones publican las métricas solo en us-east-1, igual que CloudFront, y la organización deniega allí CloudWatch y SNS (D18). Así que ninguna alarma usa métricas de Route 53 ni de CloudFront.
-  - **Alarmas del ALB, además del canario:** un grupo de destino sin tareas sanas (`HealthyHostCount` < 1) y la tasa de 5xx. Avisan aunque el canario falle.
+    Cómo se configuran:
+    - corren cada 30 s, desde los comprobadores de Route 53 en varias regiones;
+    - dan una ruta por fallida tras 3 fallos seguidos;
+    - buscan en los primeros bytes de la respuesta una cadena de lo esperado (`HTTPS_STR_MATCH`), así que un 200 con otro contenido no cuenta como sano;
+    - SNI está activado, porque CloudFront lo exige.
+
+    No guardan nada de la respuesta ni ningún registro con IP de usuarios.
+  - **La alarma de SG3:**
+    - Es una alarma por comprobación, sobre `HealthCheckStatus` (espacio `AWS/Route53`, que solo existe en us-east-1).
+    - Salta con el mínimo < 1 en 5 de 5 minutos, y trata la falta de datos como fallo.
+    - Vive en us-east-1, con el proveedor con alias `us_east_1` de D18, y avisa a un tema de SNS propio en us-east-1, `myplaylist-<entorno>-alerts-us-east-1`. Ese tema tiene la misma suscripción por correo, y su confirmación se hace una vez más desde el buzón.
+  - **La disponibilidad del mes** es la media de `HealthCheckPercentageHealthy` de las tres comprobaciones en todo el rango que se mira. El panel la muestra con un widget que lee us-east-1. Abre con los últimos 30 días, y para el mes natural se elige ese rango (R013).
+  - **El establecimiento de prueba** tiene que existir antes de crear la tercera comprobación. Un entorno nuevo la crea desactivada (`availability_check_enabled = false`, antes `canary_enabled`) hasta el primer despliegue (T017, T018). Las dos primeras no dependen de él, pero se activan a la vez para que SG3 nazca con las tres.
+  - **El canario anterior se retira:** su guion, el bucket de artefactos, el rol, el proveedor `hashicorp/archive`, y los pasos de `infra.yml` que ponían 30 días a su grupo de registros y lo borraban al destruir (T030).
+  - **Alarmas del ALB, además de las comprobaciones:** un grupo de destino sin tareas sanas (`HealthyHostCount` < 1) y la tasa de 5xx. Avisan aunque fallen las comprobaciones de Route 53.
   - **Alarmas por señal:**
 
     | Señal | Métrica | Umbral |
@@ -357,7 +382,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
     | SG2 | `HTTPCode_Target_5XX_Count` / `RequestCount` del ALB | > 0,1 % en 5 minutos |
     | SG2 | CPU del servicio `api` | > 80 % en 10 minutos |
     | SG2 | `DatabaseConnections` de RDS | > 80 % de `max_connections` |
-    | SG3 | `SuccessPercent` del canario; sin datos cuenta como fallo | < 100 % en 5 de 5 minutos |
+    | SG3 | `HealthCheckStatus` de cada comprobación de Route 53, en us-east-1; sin datos cuenta como fallo | < 1 en 5 de 5 minutos |
     | SG3 | `HealthyHostCount` de cada grupo de destino del ALB | < 1 en 2 minutos |
     | SG4 | `RequestLatency` p95, `Route=…/music` | > 1000 ms en 5 minutos |
     | SG4 | `RelayDelay` p95 | > 1000 ms en 5 minutos |
@@ -367,19 +392,24 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
     | R021 | `YouTubeQuotaUsed`, estadística `Maximum`, periodo de 1 minuto; un minuto sin datos no la dispara (`treat_missing_data = notBreaching`) | ≥ 8000 unidades |
 
   - **El panel** muestra las tasas que comparan los umbrales de SG1, SG2 y SG5 (`100 * FILL(m1, 0) / m2`), no solo los recuentos (R011).
-  - **El identificador de RDS** de la alarma de conexiones es el nombre del entorno, el mismo que usa el módulo de datos, y `max_connections` se toma como 400 (D4) hasta confirmarlo en la preproducción.
+  - **El identificador de RDS** de la alarma de conexiones es el nombre del entorno, el mismo que usa el módulo de datos, y `max_connections` se toma como 190, el de la `db.t4g.small` (D4), hasta confirmarlo en la preproducción. Si cambia la clase, cambia con ella.
   - **Estadísticas:** `YouTubeQuotaUsed` es un total, no una cuenta: con `Sum`, varias llamadas en un minuto sumarían totales y la alarma saltaría antes de tiempo. `Connections` es lo que tiene abierto cada tarea de C6: el panel lo suma entre las tareas (`Sum` por minuto). `RelayDelay` y `RequestLatency` usan percentiles (`p95`, `p99`).
   - **Historial:** CloudWatch guarda los datos de 1 minuto 15 días, los de 5 minutos 63 días y los de 1 hora 15 meses. Con eso, R011 se cumple con resolución de 5 minutos hasta los 63 días.
   - **Presupuesto de AWS:** AWS Budgets envía un correo al responsable cuando el gasto previsto del mes supera en un 20 % el coste estimado de este plan. Así se ve a tiempo una preproducción que no se destruyó.
   - **El umbral acumulado de SG3** (más de 1,8 h de caída en el mes) no se puede expresar como una alarma de CloudWatch, que evalúa como mucho un día. Se revisa en el panel cada semana, y así queda en el README de operación.
 - **Alternativas descartadas:**
-  - Las comprobaciones de salud de Route 53 de ADR-0018: sin alarmas posibles en us-east-1 (ADR-0020).
-  - Canarios cada 5 minutos: más baratos, pero R013 pide comprobar cada minuto (ADR-0020).
-  - SMS: el usuario eligió correo.
+  - **El canario de CloudWatch Synthetics cada minuto,** que ya estaba escrito (T016):
+    - cuesta unos US$53 al mes, frente a unos US$5;
+    - mira desde una sola región, la del servicio;
+    - es código que hay que mantener cuando AWS retira versiones de Synthetics (ADR-0022).
+  - **Un servicio externo de monitorización:** es otro proveedor con su cuenta y su credencial (ADR-0022).
+  - **SMS:** el usuario eligió correo.
 - **Consecuencias:**
-  - El canario necesita una ruta de salud de C6 que pase por CloudFront: `/socket.io/health`. C6 la atiende además de `/health`.
-  - El canario corre en la misma región que el servicio: si cae toda us-east-2, la alarma lo ve como falta de datos, que cuenta como fallo.
-  - Unas 14 alarmas por entorno.
+  - Las comprobaciones necesitan una ruta de salud de C6 que pase por CloudFront: `/socket.io/health`. C6 la atiende además de `/health`.
+  - Miran desde varias regiones, así que una caída de toda us-east-2 se ve como fallo, no solo como falta de datos.
+  - **Durante una retirada (R014),** las tres comprobaciones fallan y SG3 avisa. Es lo esperado, y el procedimiento de `maintenance.yml` lo anota.
+  - **La observabilidad usa dos regiones:** SG3 y su tema en us-east-1, y todo lo demás en us-east-2.
+  - Unas 16 alarmas por entorno: las de antes, con la de SG3 desdoblada en una por comprobación.
 
 ### D13 — Preproducción temporal y la prueba de carga en Fargate
 
@@ -418,9 +448,9 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
   - **MAIL FROM:** `mail.myplaylist.200oklabs.com`, con su MX y su registro SPF.
   - **DMARC:** `p=quarantine` en `_dmarc.myplaylist.200oklabs.com`.
   - **Remitente:** `no-responder@myplaylist.200oklabs.com`.
-  - **Región:** us-east-2 (ADR-0019). La configuración de la aplicación (`aws_region` en `app/shared/config.py`) pasa a tener us-east-2 por defecto, en lugar de us-east-1, y las definiciones de tarea fijan además `AWS_REGION=us-east-2` (D6). Las dos cosas: el valor por defecto evita que un olvido envíe a una región donde la identidad no existe, y la variable explícita deja la región a la vista en la definición de tarea.
+  - **Región:** us-east-2 (ADR-0021). La configuración de la aplicación (`aws_region` en `app/shared/config.py`) pasa a tener us-east-2 por defecto, en lugar de us-east-1, y las definiciones de tarea fijan además `AWS_REGION=us-east-2` (D6). Las dos cosas: el valor por defecto evita que un olvido envíe a una región donde la identidad no existe, y la variable explícita deja la región a la vista en la definición de tarea.
   - **Avisos de SES:** los rebotes y las quejas van al mismo tema de avisos (D12).
-  - **Salida del sandbox:** se pide una vez a AWS, de forma manual. Es un requisito previo de la puesta en marcha (R008). Hoy la bloquea la organización (D18).
+  - **Salida del sandbox:** se pide una vez a AWS, de forma manual. Es un requisito previo de la puesta en marcha (R008). En la cuenta antigua la bloqueaba la organización; en la cuenta propia se pide al crearla (D18).
   - **Permiso de envío:** solo el trabajador, y solo como el dominio (`ses:FromAddress`). El recurso son las identidades de la cuenta en us-east-2, porque en el sandbox SES comprueba también el permiso sobre la identidad del destinatario.
   - **Avisos:** los rebotes y las quejas van al tema, sin las cabeceras del correo original (R016), y SES deja de reenviarlos por correo. El tema de avisos tiene que permitir publicar a SES (T016).
   - **Si falla el MX del MAIL FROM,** SES usa el suyo por defecto: se pierde la alineación por SPF, pero DKIM mantiene DMARC y el correo sale.
@@ -451,7 +481,7 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
 - **Decisión:**
   - **Trabajo `infra` en `ci.yml`:** con el filtro `src/infra/**`, ejecuta `terraform fmt -check`, `terraform validate` y `terraform test`. Se añade a `ci`.
-  - **Sin plan contra AWS en los PR:** el plan de un entorno tendría que leer el token de Redis (recurso efímero) y la cabecera de CloudFront, y un rol que lo permitiera los expondría a cualquier PR. El plan real se hace en `infra.yml`, en el entorno protegido y en el mismo trabajo que el `apply` (el `plan` escribe el zip del canario, D12), y queda en el resumen de la ejecución. `infra.yml` también destruye la preproducción, y nunca producción.
+  - **Sin plan contra AWS en los PR:** el plan de un entorno tendría que leer el token de Redis (recurso efímero) y la cabecera de CloudFront, y un rol que lo permitiera los expondría a cualquier PR. El plan real se hace en `infra.yml`, en el entorno protegido y en el mismo trabajo que el `apply`, que aplica el plan que se acaba de mostrar, y queda en el resumen de la ejecución. `infra.yml` también destruye la preproducción, y nunca producción.
   - **Versiones fijas:** Terraform en `src/infra/.terraform-version`, y los proveedores en `.terraform.lock.hcl`, que se versiona.
 - **Alternativas descartadas:** Terraform Cloud para planes y estado. Es otro servicio y otra cuenta, cuando el estado ya vive en S3 (ADR-0016).
 - **Alternativas descartadas:** un rol de plan para los PR, que lea solo la cabecera y use un token de Redis de relleno: conserva la vista del plan en el PR, pero añade un caso especial al módulo raíz y da a cualquier PR la lectura de todo el estado.
@@ -459,57 +489,67 @@ La decisión clave es servir la SPA, la API y el tiempo real **bajo el mismo ori
 
 ### D17 — Arranque único y requisitos previos manuales
 
-- **Decisión:** `src/infra/bootstrap/` crea, una sola vez y con credenciales de administrador desde el equipo del desarrollador:
+- **Decisión:** `src/infra/bootstrap/` crea, una sola vez en la cuenta propia (D18), y con credenciales de administrador desde el equipo del desarrollador:
   - el bucket del estado;
   - la zona de Route 53 de `200oklabs.com`;
-  - el proveedor OIDC de GitHub, si la organización de AWS lo permite (D18);
+  - el proveedor OIDC de GitHub (`create_github_oidc_provider = true`);
   - el rol de despliegue, limitado a los entornos protegidos de este repositorio. Cada entorno de GitHub lleva los secretos `AWS_DEPLOY_ROLE_ARN` y `ALERT_EMAIL` (D12).
 
   Lo que no se puede automatizar queda como lista en `src/infra/README.md`:
-  1. delegar los servidores de nombres del registrador a Route 53;
-  2. pedir la salida del sandbox de SES (D14);
-  3. introducir `YOUTUBE_API_KEY`;
-  4. confirmar la suscripción al tema de avisos;
-  5. crear los entornos `production` y `preproduction` en GitHub, con revisor y la regla de etiquetas;
-  6. pedir a Google la ampliación de la cuota de YouTube, si la prueba con usuarios lo exige.
-- **Alternativas descartadas:** crear los entornos de GitHub con Terraform (proveedor `github`). Exige un token de GitHub de administrador en el estado, para seis ajustes que se hacen una vez.
+  1. crear la cuenta de AWS propia (D18), con MFA en la cuenta raíz y un usuario o rol de administración para el arranque;
+  2. delegar los servidores de nombres del registrador a la zona de Route 53 de la cuenta propia;
+  3. pedir la salida del sandbox de SES (D14);
+  4. introducir `YOUTUBE_API_KEY`;
+  5. confirmar las dos suscripciones a los temas de avisos, el de us-east-2 y el de us-east-1 (D12);
+  6. crear los entornos `production` y `preproduction` en GitHub, con revisor y la regla de etiquetas;
+  7. pedir a Google la ampliación de la cuota de YouTube, si la prueba con usuarios lo exige;
+  8. revisar las cuotas de servicio de la cuenta nueva (vCPU de Fargate bajo demanda) y pedir que se suban antes de la prueba de carga (T019).
+- **Alternativas descartadas:** crear los entornos de GitHub con Terraform (proveedor `github`). Exige un token de GitHub de administrador en el estado, para ajustes que se hacen una vez.
 - **Consecuencias:** el arranque es la única parte que no pasa por el flujo con aprobación. Se documenta y se revisa en su PR.
 
-### D18 — Lo que imponen las políticas de la organización de AWS
+### D18 — Cuenta de AWS propia, fuera de la organización (ADR-0021)
 
-- **Contexto:** la cuenta del negocio (`955519187424`) pertenece a una organización de AWS administrada desde otra cuenta. Sus políticas (SCP), comprobadas con el simulador de políticas y con llamadas `--dry-run`, imponen dos cosas:
-  - los recursos regionales solo se pueden crear en us-east-2, y los servicios globales se piden a us-east-1;
-  - no se pueden crear, ver ni listar proveedores de identidad, OIDC ni SAML (`p-n79p9if6`);
-  - la misma política deniega `ses:PutAccountDetails`, la acción que pide la salida del sandbox de SES (D14), e `iam:*LoginProfile`, así que ni siquiera se puede cambiar la contraseña de consola de un usuario IAM. Comprobado el 2026-11-13 con el simulador de políticas.
+- **Contexto:**
+  - La cuenta en que se construyó la infraestructura (`955519187424`) pertenece a una organización de AWS administrada desde otra cuenta. Sus políticas (SCP), comprobadas el 2026-11-13 con el simulador de políticas y con llamadas `--dry-run`, imponían:
+    - crear los recursos regionales solo en us-east-2;
+    - ningún proveedor de identidad, OIDC ni SAML (`p-n79p9if6`);
+    - no salir del sandbox de SES (`ses:PutAccountDetails`);
+    - no usar CloudWatch ni SNS en us-east-1.
+  - El caso de soporte 179460898900807, abierto el 2026-11-13, siguió sin respuesta unas tres semanas.
+  - La evaluación de proveedores (`docs/arquitectura/2026-11-26-evaluacion-proveedor-despliegue.md`) llevó a ADR-0021.
 - **Decisión:**
-  - **Región:** el proveedor de Terraform por defecto es us-east-2 (ADR-0019). Un proveedor con alias `us_east_1` se usa solo para el certificado de ACM de CloudFront.
-  - **Bucket del estado:** está en us-east-2, y los `backend` de los entornos lo apuntan ahí.
-  - **El proveedor OIDC de GitHub** lo crea quien administra la organización, o lo permite con una excepción; el usuario lo pidió. El arranque tiene la variable `create_github_oidc_provider`:
-    - con `true`, lo crea;
-    - con `false`, solo lo referencia por su ARN, que es fijo: `arn:aws:iam::<cuenta>:oidc-provider/token.actions.githubusercontent.com`.
-
-    Así el resto del arranque (el bucket, la zona y los roles) se aplica sin esperar a la excepción. Los flujos de despliegue (T018) no funcionan hasta que exista el proveedor.
-  - **Comprobación previa:** antes de cada arranque, una comprobación con `aws iam simulate-principal-policy` de las acciones que necesita, en us-east-2 y en us-east-1, documentada en `src/infra/README.md`.
+  - **Una cuenta de AWS nueva e independiente,** sin organización por encima, cuya cuenta raíz es del negocio, con MFA y sin uso diario.
+  - **Región:** se mantiene us-east-2 (ADR-0021). Todo lo escrito y probado está en esa región, y moverlo no aporta nada desde Bogotá.
+  - **Proveedor de Terraform:** el proveedor por defecto es us-east-2. El proveedor con alias `us_east_1` se usa para el certificado de ACM de CloudFront y para la alarma de SG3 con su tema (D12).
+  - **Bucket del estado:** está en us-east-2, en la cuenta nueva, y los `backend` de los entornos lo apuntan ahí. Su nombre lleva el ID de la cuenta nueva.
+  - **El proveedor OIDC de GitHub** lo crea el arranque (`create_github_oidc_provider = true`, que pasa a ser el valor por defecto). La variable se conserva para una cuenta donde ya exista.
+  - **La comprobación previa de las SCP** con `aws iam simulate-principal-policy` se retira: sin organización, no hay SCP. `aws organizations describe-organization` devuelve `AWSOrganizationsNotInUseException`, y así queda anotado en el README.
+  - **La cuenta antigua:**
+    - Sus recursos del arranque (el bucket del estado, la zona y el rol de despliegue) los destruye el usuario con el estado del arranque antiguo, después de delegar el dominio a la zona nueva.
+    - El caso de soporte se cierra.
+    - No hay datos que migrar: producción nunca se desplegó.
 - **Alternativas descartadas:**
-  - Desplegar con las claves de un usuario IAM: ADR-0017 lo descartó, porque son credenciales de larga duración.
-  - Pedir también la excepción para us-east-1: el usuario prefirió adaptarse a us-east-2 (ADR-0019).
+  - **Seguir esperando a la organización:** el piloto sigue parado sin fecha.
+  - **Otra nube (GCP), un VPS o Vercel:** véase ADR-0021 y la evaluación.
+  - **Desplegar con las claves de un usuario IAM en la cuenta antigua:** ADR-0017 lo descartó, porque son credenciales de larga duración, y además no resolvía el correo.
 - **Consecuencias:**
-  - T018 depende de que exista el proveedor OIDC, y la puesta en marcha en producción (T023), de salir del sandbox de SES. Las dos cosas se piden a quien administra la organización, con un caso de soporte de AWS (tipo «Account and billing»), porque la cuenta de gestión no es accesible.
-  - Si la organización no responde, las salidas son el plan B de despliegue (claves de un usuario IAM que solo asumen el rol, con un ADR nuevo) o una cuenta de AWS fuera de la organización, que cambia ADR-0019.
-  - Si la organización cambia sus políticas, se repite la comprobación previa antes de aplicar nada.
+  - T009 (OIDC) y T015 (sandbox de SES) se cierran en la cuenta nueva, y T018 ya no depende de un tercero.
+  - El arranque se vuelve a aplicar desde cero en la cuenta nueva, y la delegación del dominio cambia a sus servidores de nombres. Durante el cambio, el DNS puede tardar lo que dure el TTL de los NS del registrador. No afecta a nadie, porque el servicio todavía no está abierto.
+  - **Una cuenta nueva tiene cuotas de servicio por defecto,** a veces bajas en las cuentas recientes. Se revisan antes de la preproducción con la prueba de carga (D17).
+  - Si algún día la cuenta pasa a una organización propia, sus SCP se revisan contra este plan antes de aplicarlas.
 
 ## Componentes afectados
 
 | Componente | Cambio | Requisitos que cubre |
 | ---------- | ------ | -------------------- |
-| `src/infra/bootstrap/` | Bucket del estado en us-east-2, zona de Route 53, proveedor OIDC (opcional, D18) y el rol de despliegue (D17) | R001, R002 |
+| `src/infra/bootstrap/` | Bucket del estado en us-east-2, zona de Route 53, proveedor OIDC (D18) y el rol de despliegue (D17), en la cuenta propia | R001, R002 |
 | `src/infra/modules/network` | VPC, subredes en dos zonas y grupos de seguridad (D2); en preproducción, los puertos de Mailpit (SMTP y su API) entre las tareas (D13) | R009, R022 |
 | `src/infra/modules/edge` | CloudFront, el certificado del dominio público (us-east-1), el origen del ALB por HTTPS, los alias de Route 53, el bucket de la SPA, la función `edge` (rutas de la SPA y mantenimiento), el KeyValueStore y la política que reenvía `CloudFront-Viewer-Address` (D1, D10, D11) | R003, R014, R015, R020 |
 | `src/infra/modules/data` | RDS Multi-AZ con sus copias y ElastiCache con réplica (D4) | R009, R010 |
 | `src/infra/modules/compute` | Clúster de ECS, ECR, ALB con su listener HTTPS, el certificado del origen (us-east-2) y su registro alias, los servicios, el autoescalado, el «circuit breaker», la tarea de migración, Mailpit y k6 en preproducción (D3, D8, D13) | R003, R004, R005, R009, R017, R022 |
 | `src/infra/modules/secrets` | Secretos generados, efímeros y de solo escritura, y su rotación (D6) | R006, R007, R022 |
 | `src/infra/modules/email` | Identidad de SES, DKIM, MAIL FROM y DMARC (D14) | R008 |
-| `src/infra/modules/observability` | Grupos de registros de 30 días, alarmas, tema de SNS, el canario de disponibilidad y su bucket, Contributor Insights y el panel (D12) | R011, R012, R013, R016, R020, R021 |
+| `src/infra/modules/observability` | Grupos de registros de 30 días, alarmas, temas de SNS en us-east-2 y us-east-1, las comprobaciones de salud de Route 53 con la alarma de SG3, Contributor Insights y el panel (D12) | R011, R012, R013, R016, R020, R021 |
 | `src/infra/environments/{production,preproduction}` | Variables y estado de cada entorno | R022 |
 | `src/infra/tests/*.tftest.hcl` | Pruebas del plan (D15) | R003, R009, R010, R011, R016, R022 |
 | `.github/workflows/deploy.yml` | Despliegue de una etiqueta con aprobación (D9) | R001, R002, R004, R005, R007 |
@@ -695,7 +735,7 @@ classDiagram
 | R010 | plan: retención de 7 días; entorno: restaurar a un momento dado en una instancia aparte | `src/infra/tests/data.tftest.hcl`, `docs/qa/infra-resiliencia.md` |
 | R011 | unitaria: middleware, EMF, `TrackGap` y métricas de C6; plan: alarmas; entorno: el panel muestra cada cifra | `src/backend/tests/unit/test_observability.py`, `src/backend/tests/integration/test_track_metrics.py`, `src/realtime/test/metrics.test.ts`, `src/infra/tests/observability.tftest.hcl`, `docs/qa/infra-operacion.md` |
 | R012 | entorno (preproducción): forzar cada alarma y recibir el correo en menos de 5 minutos, también fuera de horario | `docs/qa/infra-operacion.md` |
-| R013 | plan: el canario cada minuto con sus tres pasos, la alarma de SG3 y que ninguna alarma usa métricas de us-east-1; unitaria: el guion del canario; entorno (preproducción): retirar 5 minutos y ver la caída en el canario y en el panel | `src/infra/tests/observability.tftest.hcl`, `src/infra/modules/observability/canary/canary.test.js`, `docs/qa/infra-operacion.md` |
+| R013 | plan: las tres comprobaciones de Route 53 cada 30 s con búsqueda de texto, y la alarma de SG3 en us-east-1 con la falta de datos como fallo; entorno (preproducción): retirar 5 minutos y ver la caída en las comprobaciones y en el panel | `src/infra/tests/observability.tftest.hcl`, `docs/qa/infra-operacion.md` |
 | R014 | entorno (preproducción): `maintenance.yml retirar`, medir el tiempo y comprobar el QR, el panel, un pedido y el correo | `docs/qa/infra-operacion.md` |
 | R015 | entorno (preproducción): `maintenance.yml volver` y entrar con la misma cuenta | `docs/qa/infra-operacion.md` |
 | R016 | unitaria: el middleware no escribe la cadena de consulta, cookies ni cabeceras, y el trabajador no escribe direcciones; plan: retención de 30 días y sin registros de acceso del ALB ni de CloudFront; entorno: buscar en los registros | `src/backend/tests/unit/test_observability.py`, `src/backend/tests/unit/test_worker_logs.py`, `src/infra/tests/observability.tftest.hcl`, `docs/qa/infra-operacion.md` |
@@ -708,34 +748,38 @@ classDiagram
 
 ## Coste estimado
 
-Son el orden de magnitud con el que se aprobó el plan: precios de lista bajo demanda en us-east-1, que coinciden o casi con los de us-east-2 (ADR-0019). T009 los comprobó con la API de precios de AWS (`aws pricing get-products`) en us-east-2, y el total comprobado, unos US$435 a 440 al mes, queda dentro del 20 % de esta tabla. El canario de ADR-0020 (US$0,0012 por ejecución, unas 43 800 al mes) añade unos US$53, y las comprobaciones de Route 53 que sustituye restan unos US$2. Las cifras comprobadas están en `src/infra/README.md`, «Coste».
+Precios de lista bajo demanda en us-east-2, los que comprobó T009 con la API de precios de AWS (`aws pricing get-products`), aplicados al perfil de piloto de ADR-0021 y a las comprobaciones de ADR-0022. Antes de este cambio, el plan estimaba unos US$500 a 515 al mes en reposo, con la capacidad de la hora pico como mínimo y el canario. La comparación con las demás opciones está en `docs/arquitectura/2026-11-26-evaluacion-proveedor-despliegue.md`, y las cifras comprobadas en `src/infra/README.md`, «Coste», que T031 actualiza.
 
 | Recurso | Producción, en reposo (US$/mes) |
 | ------- | ------------------------------- |
-| ECS `api`: 2 × (2 vCPU, 4 GiB) | ~145 |
-| ECS `worker`: 2 × (0,25 vCPU, 0,5 GiB) | ~18 |
-| ECS `realtime`: 2 × (0,5 vCPU, 1 GiB) | ~36 |
-| RDS `db.t4g.medium` Multi-AZ y 20 GiB gp3 | ~100 |
-| ElastiCache 2 × `cache.t4g.small` | ~47 |
+| ECS `api`: 2 × (1 vCPU, 2 GiB) | ~72 |
+| ECS `worker`: 1 × (0,25 vCPU, 0,5 GiB) | ~9 |
+| ECS `realtime`: 2 × (0,25 vCPU, 0,5 GiB) | ~18 |
+| RDS `db.t4g.small` Multi-AZ y 20 GiB gp3 | ~51 |
+| ElastiCache 2 × `cache.t4g.micro` | ~23 |
 | ALB | ~25 |
-| IP públicas (6 tareas y el ALB en dos zonas) | ~30 |
-| CloudWatch (registros, unas 40 métricas, 14 alarmas, Contributor Insights) | ~30 a 45 |
-| El canario de disponibilidad, cada minuto (ADR-0020) | ~53 |
-| CloudFront, Route 53 (la zona), Secrets Manager, ECR, SES, S3 | ~13 |
-| **Total** | **~500 a 515** |
+| IP públicas (5 tareas y el ALB en dos zonas) | ~26 |
+| CloudWatch (registros, unas 40 métricas, 16 alarmas, Contributor Insights) | ~20 |
+| Tres comprobaciones de salud de Route 53, con sus alarmas y el tema en us-east-1 (ADR-0022) | ~6 |
+| CloudFront, Route 53 (la zona), Secrets Manager, ECR, SES, S3 | ~14 |
+| **Total** | **~265** |
 
-- **Hora pico:** el autoescalado hasta 6 tareas de la API añade unos US$0,20 por tarea y hora.
-- **Preproducción:** unos US$0,70 por hora con todo en marcha, más la tarea de k6. Una prueba completa, de unas 3 horas entre crear, desplegar, probar y destruir, cuesta unos US$3.
+- **Hora pico:** cada tarea extra de la API, de 1 vCPU, añade unos US$0,05 por hora. Cuatro horas de pico al día con cuatro tareas extra suman unos US$24 al mes.
+- **Si la prueba de carga pide el escalón siguiente** (`db.t4g.medium` y `cache.t4g.small`), son unos US$72 más al mes (D4).
+- **Preproducción:** con la misma capacidad que producción (R022), unos US$0,36 por hora, más la tarea de k6 (4 vCPU, unos US$0,20 por hora). Una prueba completa, de unas 3 horas entre crear, desplegar, probar y destruir, cuesta unos US$2.
 - **Ahorros posteriores, sin cambiar el plan:** Graviton (−20 % en Fargate), un Compute Savings Plan (hasta −50 %) e instancias reservadas para RDS.
+- **El presupuesto de AWS Budgets** (D12) se fija con este total.
 
 ## Riesgos técnicos
 
 | Riesgo | Impacto | Mitigación |
 | ------ | ------- | ---------- |
 | La cuota de YouTube (10 000 unidades al día, 100 por búsqueda sin caché) no alcanza para 50 locales | Alto: la búsqueda deja de estar disponible a media noche | La caché de 24 h y la alarma al 80 % (R021). Pedir la ampliación a Google antes de abrir a los locales del piloto (D17). |
-| SES no sale del sandbox: la organización deniega la petición (D18), o AWS tarda o la niega | Alto: bloquea R008 y la puesta en marcha | El caso de soporte de AWS para la organización (D18). Después, pedirlo con el uso descrito: correos transaccionales y bajo volumen (D14). |
+| SES no sale del sandbox en la cuenta nueva: AWS tarda o la niega | Alto: bloquea R008 y la puesta en marcha | Pedirlo nada más crear la cuenta, con el uso descrito: correos transaccionales, bajo volumen, y rebotes y quejas atendidos (D14). Si AWS lo niega, se activa el plan B de la evaluación (ADR-0021). |
+| La cuenta nueva tiene cuotas de servicio bajas (vCPU de Fargate) | Medio: la preproducción o el autoescalado no arrancan | Revisarlas en Service Quotas al crear la cuenta y pedir que se suban antes de T019 (D17). |
 | La política de tratamiento definitiva no llega | Alto: la API no arranca en producción | Es un supuesto de la spec. La preproducción admite el borrador, así que todo lo demás se puede probar. |
-| La `db.t4g.medium` agota sus créditos de CPU con la carga sostenida de Q2 | Medio: latencia alta en la hora pico | La prueba de carga en la preproducción lo mide. Si pasa, se cambia a `db.m7g.large` y se rehace el coste. |
+| La `db.t4g.small` del perfil de piloto agota sus créditos de CPU o sus conexiones con la carga de Q2 | Medio: latencia alta en la hora pico | La prueba de carga en la preproducción lo mide. Si pasa, se sube a `db.t4g.medium` (o a `db.m7g.large`) con el máximo de tareas de la API, y se rehace el coste (D4). |
+| Con tareas de 1 vCPU, el mínimo de la API no absorbe el arranque de la hora pico mientras escala | Medio: latencia alta unos minutos | La prueba de carga lo mide. Si pasa, se sube el mínimo o se programa una escala antes de la hora pico (D3). |
 | Q2 necesita más de 6 tareas de la API en Fargate | Medio | Lo mide la preproducción. Se sube el máximo y se recalculan las conexiones de RDS (D4). |
 | CloudFront corta un WebSocket inactivo | Bajo | El latido de Socket.IO cada 25 s y la reconexión que ya existe (D3 de 002). |
 | La versión fijada de `sdd trace` en el CI no lee los ID en `.tftest.hcl` o en `docs/qa/` | Medio: requisitos que figuran sin probar | Se comprueba en la primera tarea (D15). Si no los lee, se usa un comentario con el ID o se actualiza la versión fijada. |

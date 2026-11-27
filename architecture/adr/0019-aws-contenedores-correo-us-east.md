@@ -2,7 +2,7 @@
 
 | Campo         | Valor |
 | ------------- | ----- |
-| Estado        | Approved · 1c2e7b0759fc |
+| Estado        | Superseded by ADR-0021 |
 | Fecha         | 2026-11-11 |
 | Motivo        | Q3, Q2, Q7, D1§1, D1§7 |
 | Sustituye     | ADR-0006, ADR-0011 |
